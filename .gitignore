@@ -1,0 +1,63 @@
+# =============================================================================
+# AUTQS - .gitignore
+# =============================================================================
+
+# Arquivos de credenciais e segredos (NUNCA COMITAR)
+.env
+*.env.local
+*.key
+*.pem
+
+# Python cache e ambientes virtuais
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Arquivos temporários, registros e backups do TQS / Windows
+*.BAK
+*.bak
+*.TMP
+*.tmp
+*.log
+CUSTOMDL.TMP
+GERENCIADOR.DAT
+EAGCRIT.DAT
+
+# Pranchas e desenhos de saída gerados (mantém o template base GEO_CARGAS.DWG)
+PLANTA_DE_CARGAS*.DWG
+PLANTA_DE_CARGAS*.dwg
+PLANTA_DE_CARGAS*.dxf
+PLANTA_DE_CARGAS*.BAK
+PORLID.DWG
+test_*.DWG
+test_*.dwg
+
+# Editores e IDEs
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+.system_generated/
+.DS_Store
+Thumbs.db

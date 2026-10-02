@@ -1,0 +1,20 @@
+# Dependências do AUTQS (Agente de IA e Automação para TQS V25)
+# Instalação: pip install -r requirements.txt
+
+# Requisições HTTP para a API do Gemini
+requests>=2.31.0
+
+# Carregamento de variáveis de ambiente (.env)
+python-dotenv>=1.0.0
+
+# Geração de arquivos DXF (fallback para exportação vetorial)
+ezdxf>=1.1.0
+
+# Interface Web de Chat Interativo
+streamlit>=1.30.0
+
+# Manipulação de dados e relatórios estruturais
+pandas>=2.0.0
+
+# Gráficos interativos para o dashboard web
+plotly>=5.18.0
