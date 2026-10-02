@@ -66,17 +66,18 @@ class AutqsChatAgent:
                 "dados": edificios,
             }
 
-        # 3. Solicitação de Geração de Planta de Cargas
+        # 3. Solicitação de Geração de Planta de Cargas / Gabarito
         pediu_gerar_planta = (
             ("planta" in msg_lower and any(k in msg_lower for k in ["carga", "loca", "gerar", "desenh", "emitir", "funda"]))
-            or any(k in msg_lower for k in ["gerar dwg", "criar dwg", "emitir prancha", "desenhar prancha", "gerar prancha"])
+            or any(k in msg_lower for k in ["gerar dwg", "criar dwg", "emitir prancha", "desenhar prancha", "gerar prancha", "gabarito"])
+            or "gabarito" in msg_lower
         )
         if pediu_gerar_planta:
             edificio_alvo = self.edificio_ativo or "054"
             try:
                 res = self.orchestrator.processar_comando_local(
                     "gerar_planta_de_cargas",
-                    {"edificio_nome": edificio_alvo}
+                    {"edificio_nome": edificio_alvo, "caminho_saida_desenho": "GABARITO.DWG"}
                 )
 
                 if res.get("status") == "sucesso":
@@ -85,7 +86,9 @@ class AutqsChatAgent:
                     total = len(pilares)
                     dwg_local = res.get("arquivo_desenho_gerado")
                     caminho_ed = res.get("caminho_edificio", "")
-                    copia_tqs = os.path.join(caminho_ed, os.path.basename(dwg_local)) if caminho_ed else dwg_local
+                    copia_tqs = res.get("caminho_espacial")
+                    if not copia_tqs and caminho_ed and dwg_local:
+                        copia_tqs = os.path.join(caminho_ed, "ESPACIAL", os.path.basename(dwg_local))
 
                     # Verifica se há pilares tracionados
                     tracionados = [p for p in pilares if p.get("nk_max_tf", 0.0) < 0]
@@ -111,7 +114,7 @@ class AutqsChatAgent:
                         f"{porlid_info}"
                         f"- **Escala:** 1:50 com Projeção de Moldura Oficial TQS\n"
                         f"- **Arquivo DWG Nativo:** `{dwg_local}`\n"
-                        f"- **Salvo no TQS:** `{copia_tqs}`\n\n"
+                        f"- **Salvo na pasta ESPACIAL do TQS:** `{copia_tqs}`\n\n"
                     )
 
                     if tracionados:

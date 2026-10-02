@@ -1,4 +1,5 @@
 import os
+import json
 import math
 from typing import List, Optional, Tuple, Dict, Any
 from TQS import TQSDwg
@@ -155,7 +156,7 @@ class TQSDwgPlantaDeCargasBuilder:
         alt_locacao = max_yp - min_yp
 
         # 2. Desenha a Planta de Locação dos Pilares nas suas coordenadas originais
-        self._desenhar_pilares_locacao(dwg, planta.pilares, bounds_planta)
+        self._desenhar_pilares_locacao(dwg, planta.pilares, bounds_planta, escala=escala)
 
         # 3. Disposição Inteligente das Tabelas para Enquadramento em Molduras Padrão TQS
         dados_porlid = planta.dados_porlid
@@ -200,12 +201,12 @@ class TQSDwgPlantaDeCargasBuilder:
                 dwg, x_start=x_tabelas, y_start=y_topo_notas, dados_porlid=planta.dados_porlid
             )
 
-            largura_max_tabelas = max(larg_tabela_bar, larg_tabela_cargas, 1260.0)
+            largura_max_tabelas = max(larg_tabela_bar, larg_tabela_cargas, 2720.0)
             bounds_conteudo = (
                 min_xp,
                 x_tabelas + largura_max_tabelas,
                 min(min_yp, y_fim_notas),
-                y_topo_tabelas + 100.0,
+                max(max_yp + 260.0, y_topo_tabelas + 100.0),
             )
         else:
             # layout_modo == "abaixo" (Tabelas dispostas lado a lado horizontalmente sob a locação)
@@ -233,13 +234,13 @@ class TQSDwgPlantaDeCargasBuilder:
                 dwg, x_start=x_notas, y_start=y_topo_tabelas, dados_porlid=planta.dados_porlid
             )
 
-            x_max_conteudo = max(max_xp, x_notas + 950.0)
+            x_max_conteudo = max(max_xp, x_notas + 2720.0)
             y_min_conteudo = min(y_fim_cargas, y_fim_bar, y_fim_notas)
             bounds_conteudo = (
                 min_xp,
                 x_max_conteudo,
                 y_min_conteudo,
-                max_yp + 100.0,
+                max_yp + 260.0,
             )
 
         # 4. Seleção Automática e Desenho da Moldura Catalogada Oficial TQS
@@ -329,9 +330,13 @@ class TQSDwgPlantaDeCargasBuilder:
         dwg: TQSDwg.Dwg,
         pilares: List[PilarFundacao],
         bounds: Tuple[float, float, float, float],
+        escala: int = 50,
     ):
         """
         Desenha cada pilar em suas coordenadas espaciais reais:
+        - Título Oficial TQS (Padrão GEO_CARGAS / Zuckhan Soledade):
+          Nível 222, Altura 60.0: 'GABARITO E CARGAS NAS FUNDAÇÕES'
+          Nível 250, Altura 22.5: 'ESCALA 1:50' posicionado diretamente abaixo
         - Contorno retangular ou poligonal fechado (Nível 3)
         - Cruz de baricentro (Nível 21)
         - Nome do pilar (Nível 9, H=18.0) fora do contorno
@@ -340,12 +345,23 @@ class TQSDwgPlantaDeCargasBuilder:
         min_x, max_x, min_y, max_y = bounds
         cx_planta = (min_x + max_x) / 2.0
 
-        # Título da Planta de Locação
+        # Título Oficial (Padrão Oficial TQS GEO_CARGAS / Zuckhan Soledade)
+        # Nível 222, Tamanho 60.0: GABARITO E CARGAS NAS FUNDAÇÕES
+        y_titulo = max_y + 160.0
+        larg_titulo_est = 1860.0
+        if (max_x - min_x) > (larg_titulo_est + 400.0):
+            x_titulo = min_x + 100.0
+        else:
+            x_titulo = max(min_x, cx_planta - (larg_titulo_est / 2.0))
+
         dwg.draw.level = 222
-        dwg.draw.Text(cx_planta - 250.0, max_y + 120.0, 32.0, 0.0, "PLANTA DE LOCAÇÃO DOS PILARES")
-        dwg.draw.level = 0
-        dwg.draw.Text(cx_planta - 270.0, max_y + 70.0, 16.0, 0.0, "ESCALA 1:50  |  COTAS E COORDENADAS EM CENTÍMETROS")
-        dwg.draw.Line(min_x - 50.0, max_y + 40.0, max_x + 50.0, max_y + 40.0)
+        dwg.draw.Text(x_titulo, y_titulo, 60.0, 0.0, "GABARITO E CARGAS NAS FUNDAÇÕES")
+
+        # Texto indicando escala na posição abaixo conforme padrão GEO_CARGAS (Nível 250, Tamanho 22.5)
+        y_escala = y_titulo - 36.8
+        x_escala = x_titulo + 9.5
+        dwg.draw.level = 250
+        dwg.draw.Text(x_escala, y_escala, 22.5, 0.0, f"ESCALA 1:{escala}")
 
         raio_cruz = 18.0
 
@@ -491,8 +507,8 @@ class TQSDwgPlantaDeCargasBuilder:
 
             # Título Geral da Tabela de Cargas
             y_titulo = y_start
-            dwg.draw.level = 222
-            dwg.draw.Text(x_start + (largura_total / 2.0) - 220.0, y_titulo, 22.0, 0.0, "GABARITO E CARGAS NAS FUNDAÇÕES")
+            dwg.draw.level = 250
+            dwg.draw.Text(x_start + (largura_total / 2.0) - 200.0, y_titulo, 20.0, 0.0, "TABELA DE CARGAS NAS FUNDAÇÕES")
 
             # Subtítulo Geral
             y_subtitulo = y_titulo - 26.0
@@ -602,8 +618,8 @@ class TQSDwgPlantaDeCargasBuilder:
 
         # Título Geral da Tabela de Cargas (com espaçamento seguro abaixo da tabela superior)
         y_titulo = y_start
-        dwg.draw.level = 222
-        dwg.draw.Text(x_start + (largura_total / 2.0) - 200.0, y_titulo, 20.0, 0.0, "GABARITO E CARGAS NAS FUNDAÇÕES")
+        dwg.draw.level = 250
+        dwg.draw.Text(x_start + (largura_total / 2.0) - 200.0, y_titulo, 18.0, 0.0, "TABELA DE CARGAS NAS FUNDAÇÕES")
 
         # Subtítulo (Combinação crítica oficial do TQS)
         y_subtitulo = y_titulo - 28.0
@@ -673,85 +689,239 @@ class TQSDwgPlantaDeCargasBuilder:
         y_start: float,
         dados_porlid: Optional[Dict[str, Any]] = None,
     ) -> float:
-        """Desenha notas de projeto, convenções de sinais e legenda. Retorna y_fim."""
+        """
+        Desenha os 3 blocos informativos rigorosamente iguais ao modelo GEO_CARGAS do Zuckhan Soledade:
+          1. OBSERVAÇÕES (variável conforme os casos críticos de carregamento do edifício)
+          2. CONVENÇÃO DE SINAIS (esquema isométrico 3D com eixos e esforços)
+          3. INCIDÊNCIA DAS CARGAS DE VENTO (retângulo do edifício com setas direcionais a 0°, 90°, 180°, 270°)
+        Retorna o Y mínimo (inferior) ocupado pelos blocos.
+        """
+        # =========================================================================
+        # BLOCO 1: OBSERVAÇÕES (Alinhado à esquerda: x_start, y_start)
+        # =========================================================================
         dwg.draw.level = 250
-        dwg.draw.Text(x_start, y_start, 18.0, 0.0, "OBSERVAÇÕES:")
+        dwg.draw.Text(x_start, y_start, 20.0, 0.0, "OBSERVAÇÕES:")
+        dwg.draw.Line(x_start, y_start - 11.26, x_start + 218.66, y_start - 11.26)
 
-        notas = [
-            "- Esforços oficiais extraídos do relatório de cargas nas fundações (ESPACIAL/PORLID - TQS V25).",
-            "- Forças verticais (Fz) e horizontais (Fx, Fy) em tonelada-força (tf).",
-            "- Momentos fletores (Mx, My) e torsores (Mz) em tonelada-força metro (tf.m).",
-            "- Coordenadas de locação dos baricentros (X, Y) e dimensões da seção em centímetros (cm).",
-            "- A escolha da combinação de carregamentos para elaboração do projeto de fundações",
-            "  é de inteira responsabilidade do projetista de fundações.",
-        ]
+        curr_y = y_start - 56.27
+        dy_linha = 25.01
 
-        if dados_porlid and dados_porlid.get("casos") and len(dados_porlid["casos"]) > 1:
-            notas.append("- Relação das combinações críticas de carregamento:")
-            for c in dados_porlid["casos"]:
-                notas.append(f"  * {c['nome']}: {c['titulo']}")
+        # Linhas de cabeçalho fixas
+        dwg.draw.level = 250
+        dwg.draw.Text(x_start, curr_y, 15.0, 0.0, "- Esforços com valores característicos.")
+        curr_y -= dy_linha
+
+        dwg.draw.level = 0
+        dwg.draw.Text(
+            x_start,
+            curr_y,
+            15.0,
+            0.0,
+            "- Forças em tonelada-força (tf) e momentos fletores em tonelada-força metro (tf.m).",
+        )
+        curr_y -= dy_linha
+
+        # Linhas dinâmicas de combinações críticas extraídas de PORLID
+        casos = dados_porlid.get("casos", []) if dados_porlid else []
+        if casos:
+            for idx, c in enumerate(casos):
+                cid = c.get("id", idx + 1)
+                nome_upper = c.get("nome", "").upper()
+                tit_upper = c.get("titulo", "").upper()
+                combined = f"{nome_upper} {tit_upper}"
+
+                if "FZ MAX" in combined or ("FZ" in combined and "MAX" in combined):
+                    desc = "combinação dos carregamentos que produz a máxima força vertical Fz em cada pilar"
+                elif "MX MAX" in combined:
+                    desc = "combinação dos carregamentos que produz o máximo momento fletor Mx, na direção positiva do eixo x, em cada pilar"
+                elif "MY MAX" in combined:
+                    desc = "combinação dos carregamentos que produz o máximo momento fletor My, na direção positiva do eixo y, em cada pilar"
+                elif "FZ MIN" in combined or ("FZ" in combined and "MIN" in combined):
+                    desc = "combinação dos carregamentos que produz a mínima força vertical Fz em cada pilar"
+                elif "MX MIN" in combined:
+                    desc = "combinação dos carregamentos que produz o máximo momento fletor Mx, na direção negativa do eixo x, em cada pilar"
+                elif "MY MIN" in combined:
+                    desc = "combinação dos carregamentos que produz o máximo momento fletor My, na direção negativa do eixo y, em cada pilar"
+                else:
+                    desc = f"combinação dos carregamentos: {c.get('titulo') or c.get('nome')}"
+
+                dwg.draw.level = 0
+                dwg.draw.Text(x_start, curr_y, 15.0, 0.0, f"- Caso {cid}: {desc}")
+                curr_y -= dy_linha
+
+                dwg.draw.Text(
+                    x_start,
+                    curr_y,
+                    15.0,
+                    0.0,
+                    "   (incluindo a ação do vento e empuxo do solo, se houver).",
+                )
+                curr_y -= dy_linha
         else:
-            notas.append("- Caso Crítico: combinação que produz a máxima solicitação vertical Fz em cada elemento de fundação.")
+            # Fallback caso clássico padrão caso não haja PORLID detalhado
+            dwg.draw.level = 0
+            dwg.draw.Text(
+                x_start,
+                curr_y,
+                15.0,
+                0.0,
+                "- Caso 1: combinação dos carregamentos que produz a máxima força vertical Fz em cada pilar",
+            )
+            curr_y -= dy_linha
+            dwg.draw.Text(
+                x_start,
+                curr_y,
+                15.0,
+                0.0,
+                "   (incluindo a ação do vento e empuxo do solo, se houver).",
+            )
+            curr_y -= dy_linha
 
+        # Linhas de rodapé fixas
         dwg.draw.level = 0
-        cy = y_start - 28.0
-        for n in notas:
-            dwg.draw.Text(x_start, cy, 14.0, 0.0, n)
-            cy -= 22.0
+        dwg.draw.Text(
+            x_start,
+            curr_y,
+            15.0,
+            0.0,
+            "- A escolha da combinação de carregamentos para elaboração do projeto de fundações é de inteira responsabilidade do",
+        )
+        curr_y -= dy_linha
+        dwg.draw.Text(x_start, curr_y, 15.0, 0.0, "   projetista de fundações.")
+        curr_y -= dy_linha
 
-        # Convenção de Sinais
-        cy -= 15.0
         dwg.draw.level = 250
-        dwg.draw.Text(x_start, cy, 16.0, 0.0, "CONVENÇÃO DE SINAIS:")
-        cy -= 25.0
+        dwg.draw.Text(
+            x_start,
+            curr_y,
+            15.0,
+            0.0,
+            "- As cargas distribuídas nas estruturas de contenção, quando existirem, compreendem as reações dos pavimentos nessas",
+        )
+        curr_y -= dy_linha
+        dwg.draw.Text(
+            x_start,
+            curr_y,
+            15.0,
+            0.0,
+            "   estruturas. Não está incluído o peso próprio das mesmas.",
+        )
+        curr_y -= dy_linha
 
-        sinais = [
-            "Fz: força vertical de compressão (tf) atuando no topo da fundação",
-            "Fx: força horizontal na direção do eixo X global (tf)",
-            "Fy: força horizontal na direção do eixo Y global (tf)",
-            "Mx: momento fletor em torno do eixo X (tf.m)",
-            "My: momento fletor em torno do eixo Y (tf.m)",
-            "Mz: momento torsor / em torno do eixo Z (tf.m)",
-        ]
-        dwg.draw.level = 0
-        for s in sinais:
-            dwg.draw.Text(x_start, cy, 13.5, 0.0, s)
-            cy -= 20.0
+        y_fim_obs = curr_y
 
-        # Legenda Gráfica
-        cy -= 15.0
-        dwg.draw.level = 250
-        dwg.draw.Text(x_start, cy, 16.0, 0.0, "LEGENDA:")
-        cy -= 30.0
+        # =========================================================================
+        # CARREGAMENTO DOS BLOCOS 2 E 3 (GEO_CARGAS do Zuckhan Soledade)
+        # =========================================================================
+        caminho_blocos = os.path.join(os.path.dirname(__file__), "blocos_informativos_soledade.json")
+        if os.path.exists(caminho_blocos):
+            with open(caminho_blocos, "r", encoding="utf-8") as f:
+                blocos_data = json.load(f)
 
-        # Símbolo 1: Pilar
-        dwg.draw.level = 3
-        dwg.draw.PolyStart()
-        dwg.draw.PolyEnterPoint(x_start, cy)
-        dwg.draw.PolyEnterPoint(x_start + 40.0, cy)
-        dwg.draw.PolyEnterPoint(x_start + 40.0, cy + 20.0)
-        dwg.draw.PolyEnterPoint(x_start, cy + 20.0)
-        dwg.draw.PolyEnterPoint(x_start, cy)
-        dwg.draw.Polyline()
+            # BLOCO 2: CONVENÇÃO DE SINAIS (ΔX = +1436.25 cm, ΔY = 0.00 cm)
+            x_conv = x_start + 1436.25
+            y_conv = y_start
+            for e in blocos_data.get("convencao", []):
+                etype = e.get("type")
+                dwg.draw.level = e.get("level", 0)
+                if etype == "line":
+                    dwg.draw.Line(
+                        x_conv + e["dx1"],
+                        y_conv + e["dy1"],
+                        x_conv + e["dx2"],
+                        y_conv + e["dy2"],
+                    )
+                elif etype == "text":
+                    dwg.draw.Text(
+                        x_conv + e["dx"],
+                        y_conv + e["dy"],
+                        e["height"],
+                        e.get("angle", 0.0),
+                        e["text"],
+                    )
+                elif etype == "poly":
+                    pts = e.get("pts", [])
+                    if len(pts) >= 2:
+                        dwg.draw.PolyStart()
+                        for pt in pts:
+                            dwg.draw.PolyEnterPoint(x_conv + pt[0], y_conv + pt[1])
+                        dwg.draw.Polyline()
 
-        dwg.draw.level = 21
-        dwg.draw.Line(x_start + 20.0 - 10.0, cy + 10.0, x_start + 20.0 + 10.0, cy + 10.0)
-        dwg.draw.Line(x_start + 20.0, cy + 10.0 - 10.0, x_start + 20.0, cy + 10.0 + 10.0)
+            # BLOCO 3: INCIDÊNCIA DAS CARGAS DE VENTO (ΔX = +2178.19 cm, ΔY = +1.68 cm)
+            x_vento = x_start + 2178.19
+            y_vento = y_start + 1.68
+            for e in blocos_data.get("vento", []):
+                etype = e.get("type")
+                dwg.draw.level = e.get("level", 0)
+                if etype == "line":
+                    dwg.draw.Line(
+                        x_vento + e["dx1"],
+                        y_vento + e["dy1"],
+                        x_vento + e["dx2"],
+                        y_vento + e["dy2"],
+                    )
+                elif etype == "text":
+                    dwg.draw.Text(
+                        x_vento + e["dx"],
+                        y_vento + e["dy"],
+                        e["height"],
+                        e.get("angle", 0.0),
+                        e["text"],
+                    )
+                elif etype == "poly":
+                    pts = e.get("pts", [])
+                    if len(pts) >= 2:
+                        dwg.draw.PolyStart()
+                        for pt in pts:
+                            dwg.draw.PolyEnterPoint(x_vento + pt[0], y_vento + pt[1])
+                        dwg.draw.Polyline()
 
-        dwg.draw.level = 0
-        dwg.draw.Text(x_start + 60.0, cy + 5.0, 14.0, 0.0, "PILAR QUE INICIA NA FUNDAÇÃO")
+            # BLOCO 4: CONVENÇÕES (Simbologia dos Pilares, Contenções, Ponto de Carga e Origem 0,0)
+            # Posicionado abaixo das Observações e Convenção de Sinais
+            y_conv_loc = min(y_fim_obs, y_start - 560.0) - 70.0
+            x_conv_loc = x_start
+            for e in blocos_data.get("convencoes_locacao", []):
+                etype = e.get("type")
+                dwg.draw.level = e.get("level", 0)
+                if "color" in e:
+                    dwg.draw.color = e["color"]
+                if etype == "line":
+                    dwg.draw.Line(
+                        x_conv_loc + e["dx1"],
+                        y_conv_loc + e["dy1"],
+                        x_conv_loc + e["dx2"],
+                        y_conv_loc + e["dy2"],
+                    )
+                elif etype == "text":
+                    dwg.draw.Text(
+                        x_conv_loc + e["dx"],
+                        y_conv_loc + e["dy"],
+                        e["height"],
+                        e.get("angle", 0.0),
+                        e["text"],
+                    )
+                elif etype == "poly":
+                    pts = e.get("pts", [])
+                    if len(pts) >= 2:
+                        dwg.draw.PolyStart()
+                        for pt in pts:
+                            dwg.draw.PolyEnterPoint(x_conv_loc + pt[0], y_conv_loc + pt[1])
+                        dwg.draw.Polyline()
+                elif etype == "circle":
+                    dwg.draw.Circle(
+                        x_conv_loc + e["dxc"],
+                        y_conv_loc + e["dyc"],
+                        e["radius"],
+                    )
 
-        # Símbolo 2: Baricentro
-        cy -= 30.0
-        dwg.draw.level = 21
-        dwg.draw.Line(x_start + 10.0, cy + 10.0, x_start + 30.0, cy + 10.0)
-        dwg.draw.Line(x_start + 20.0, cy, x_start + 20.0, cy + 20.0)
-        dwg.draw.Circle(x_start + 20.0, cy + 10.0, 3.0)
+            # Restaura cor padrão ByLevel
+            dwg.draw.color = 0
+            y_fim = y_conv_loc - 495.0
+            return y_fim
 
-        dwg.draw.level = 0
-        dwg.draw.Text(x_start + 60.0, cy + 5.0, 14.0, 0.0, "BARICENTRO / PONTO DE CARGA")
-
-        return cy - 20.0
+        # O Y inferior ocupado é o menor entre as observações e a convenção de sinais (-555 cm)
+        y_fim = min(y_fim_obs, y_start - 560.0)
+        return y_fim
 
     def _auto_selecionar_e_desenhar_moldura(
         self,

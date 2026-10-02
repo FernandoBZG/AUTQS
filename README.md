@@ -43,7 +43,7 @@ flowchart TD
     C --> D["Extração da Geometria (CARDWG2.LST)<br/>Vértices e Baricentros Analíticos"]
     D --> E["Extração das Reações (PORLIS2.LST)<br/>Esforços Axiais, Horizontais e Momentos"]
     E --> F["Montagem Gráfica & Moldura Oficial TQS<br/>(Catálogo NGE: A1, A0, 105-60, 140-60, etc.)"]
-    F --> G["Gravação do .DWG Nativo<br/>1. Na pasta do Edifício no TQS<br/>2. No diretório local do projeto"]
+    F --> G["Gravação do .DWG Nativo<br/>1. Na pasta ESPACIAL do Edifício no TQS<br/>2. No diretório local do projeto"]
 ```
 
 ### Como o leitor encontra seu edifício:

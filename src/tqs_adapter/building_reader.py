@@ -89,15 +89,17 @@ class TQSBuildingReader:
         termo_limpo = termo.strip().lower()
         disponiveis = self.listar_edificios_disponiveis([pasta_raiz, r"D:\TQS", r"C:\TQS"])
 
-        # 1. Procura match exato no nome
-        for ed in disponiveis:
-            if termo_limpo == ed["nome"].lower():
-                return ed["caminho"]
+        # 1. Procura match exato no nome (priorizando edifícios já processados com pórtico calculado)
+        matches_exatos = [ed for ed in disponiveis if termo_limpo == ed["nome"].lower()]
+        if matches_exatos:
+            matches_exatos.sort(key=lambda x: not x["processado"])
+            return matches_exatos[0]["caminho"]
 
-        # 2. Procura por substring no nome
-        for ed in disponiveis:
-            if termo_limpo in ed["nome"].lower():
-                return ed["caminho"]
+        # 2. Procura por substring no nome (priorizando edifícios já processados)
+        matches_sub = [ed for ed in disponiveis if termo_limpo in ed["nome"].lower()]
+        if matches_sub:
+            matches_sub.sort(key=lambda x: not x["processado"])
+            return matches_sub[0]["caminho"]
 
         nomes = [ed["nome"] for ed in disponiveis]
         raise FileNotFoundError(

@@ -168,7 +168,7 @@ def main():
 
 
             # Geração da Prancha de Desenho
-            caminho_saida = args.desenho or f"PLANTA_DE_CARGAS_{args.edificio}.dwg"
+            caminho_saida = args.desenho or "GABARITO.DWG"
             if caminho_saida.lower().endswith(".dwg"):
                 from src.drawing.tqs_dwg_builder import TQSDwgPlantaDeCargasBuilder
                 builder = TQSDwgPlantaDeCargasBuilder()
@@ -178,28 +178,30 @@ def main():
                 builder = PlantaDeCargasDwgBuilder(escala=50)
                 arquivo_gerado = builder.construir_planta_completa(planta, caminho_saida)
 
-            # Também salva uma cópia diretamente na pasta do edifício para conveniência
-            copia_edificio = os.path.join(reader.caminho_edificio, os.path.basename(arquivo_gerado))
-            caminho_final_tqs = copia_edificio
+            # A planta de cargas SEMPRE deve ficar na pasta ESPACIAL do edifício no TQS como GABARITO.DWG
+            pasta_espacial = os.path.join(reader.caminho_edificio, "ESPACIAL")
+            os.makedirs(pasta_espacial, exist_ok=True)
+            nome_dwg_espacial = "GABARITO.DWG" if caminho_saida.upper().endswith(".DWG") else os.path.basename(arquivo_gerado)
+            copia_espacial = os.path.join(pasta_espacial, nome_dwg_espacial)
+            caminho_final_tqs = copia_espacial
             try:
-                shutil.copyfile(arquivo_gerado, copia_edificio)
+                shutil.copyfile(arquivo_gerado, copia_espacial)
             except Exception:
                 # Se o arquivo estiver aberto e travado no TQS EAGW pelo usuário
-                caminho_alt = os.path.join(reader.caminho_edificio, "PLANTA_DE_CARGAS.dwg")
+                caminho_alt = os.path.join(pasta_espacial, "GABARITO_NOVO.DWG")
                 try:
                     shutil.copyfile(arquivo_gerado, caminho_alt)
                     caminho_final_tqs = caminho_alt
-                    print(f"[AVISO] '{os.path.basename(copia_edificio)}' está atualmente aberto no TQS EAGW.")
+                    print(f"[AVISO] '{os.path.basename(copia_espacial)}' está atualmente aberto no TQS EAGW.")
                     print(f"        Cópia atualizada gravada com sucesso em: '{os.path.basename(caminho_alt)}'.")
                     print(f"        (Para sobrescrever o arquivo original, basta fechá-lo no TQS).")
                 except Exception:
                     print(f"[AVISO] Arquivo aberto no TQS EAGW; feche-o para atualizar a cópia da pasta da obra.")
 
-
             print(f"\n[OK] PRANCHA NATIVA TQS .DWG GERADA COM SUCESSO:")
-            print(f"     1. No diretório local: {os.path.abspath(arquivo_gerado)}")
-            print(f"     2. Na pasta do TQS:    {copia_edificio}")
-            print(f"\nAbra o arquivo diretamente no TQS V25 (Menu Arquivo > Abrir Desenho) para visualizar.")
+            print(f"     1. No diretório local:       {os.path.abspath(arquivo_gerado)}")
+            print(f"     2. Na pasta ESPACIAL do TQS: {copia_espacial}")
+            print(f"\nAbra o arquivo diretamente no TQS V25 (Menu Arquivo > Abrir Desenho na pasta ESPACIAL) para visualizar.")
 
         except Exception as e:
             print(f"[ERRO] Falha ao processar edifício: {e}")

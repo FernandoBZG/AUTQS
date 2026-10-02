@@ -62,10 +62,12 @@ class AutqsAgentOrchestrator:
                         params["edificio_nome"] = ed["nome"]
                         break
 
-        # 3. Geração de Planta de Cargas
-        if "planta" in cmd_lower or "carga" in cmd_lower:
+        # 3. Geração de Planta de Cargas / Gabarito
+        if "planta" in cmd_lower or "carga" in cmd_lower or "gabarito" in cmd_lower:
             if not params.get("edificio_nome"):
                 params["edificio_nome"] = "054" # fallback
+            if "caminho_saida_desenho" not in params:
+                params["caminho_saida_desenho"] = "GABARITO.DWG"
             return self.registry.executar_ferramenta("gerar_planta_de_cargas", params)
 
         return {

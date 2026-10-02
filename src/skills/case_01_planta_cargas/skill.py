@@ -34,7 +34,7 @@ class PlantaDeCargasSkill(BaseSkill):
         pavimento_fundacao: str = "FUNDACAO",
         pilares_input: Optional[List[PilarFundacao]] = None,
         gerar_desenho: bool = True,
-        caminho_saida_desenho: Optional[str] = "PLANTA_DE_CARGAS.dwg",
+        caminho_saida_desenho: Optional[str] = "GABARITO.DWG",
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -72,14 +72,32 @@ class PlantaDeCargasSkill(BaseSkill):
 
         # 3. Passo: Geração da Prancha de Desenho com Pilares + Tabela
         arquivo_desenho_gerado = None
+        caminho_espacial_gerado = None
         if gerar_desenho and len(pilares_processados) > 0:
-            caminho_alvo = caminho_saida_desenho or "PLANTA_DE_CARGAS.dwg"
+            caminho_alvo = caminho_saida_desenho or "GABARITO.DWG"
             if caminho_alvo.lower().endswith(".dwg"):
                 builder_dwg = TQSDwgPlantaDeCargasBuilder()
                 arquivo_desenho_gerado = builder_dwg.construir_planta_de_cargas(planta, caminho_alvo)
             else:
                 builder_dxf = PlantaDeCargasDwgBuilder(escala=50)
                 arquivo_desenho_gerado = builder_dxf.construir_planta_completa(planta, caminho_alvo)
+
+            # A planta de cargas SEMPRE deve ficar na pasta ESPACIAL do edifício no TQS como GABARITO.DWG
+            if caminho_edificio and os.path.exists(caminho_edificio) and arquivo_desenho_gerado:
+                import shutil
+                pasta_espacial = os.path.join(caminho_edificio, "ESPACIAL")
+                os.makedirs(pasta_espacial, exist_ok=True)
+                nome_arq = "GABARITO.DWG" if caminho_alvo.upper().endswith(".DWG") else os.path.basename(arquivo_desenho_gerado)
+                caminho_espacial_gerado = os.path.join(pasta_espacial, nome_arq)
+                try:
+                    shutil.copyfile(arquivo_desenho_gerado, caminho_espacial_gerado)
+                except Exception:
+                    caminho_alt = os.path.join(pasta_espacial, "GABARITO_NOVO.DWG")
+                    try:
+                        shutil.copyfile(arquivo_desenho_gerado, caminho_alt)
+                        caminho_espacial_gerado = caminho_alt
+                    except Exception as e:
+                        print(f"[AVISO] Falha ao copiar para pasta ESPACIAL: {e}")
 
         # 4. Resumo estruturado para o Agente Cognitivo
         resumo_pilares = [
@@ -102,11 +120,12 @@ class PlantaDeCargasSkill(BaseSkill):
             "status": "sucesso",
             "edificio": edificio_nome,
             "caminho_edificio": caminho_edificio,
+            "caminho_espacial": caminho_espacial_gerado,
             "pavimento": pavimento_fundacao,
             "total_pilares_fundacao": len(pilares_processados),
             "pilares": resumo_pilares,
             "dados_porlid": dados_porlid,
-            "arquivo_desenho_gerado": arquivo_desenho_gerado
+            "arquivo_desenho_gerado": arquivo_desenho_gerado,
         }
 
 
