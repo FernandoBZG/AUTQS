@@ -75,29 +75,51 @@ class PlantaDeCargasSkill(BaseSkill):
         caminho_espacial_gerado = None
         if gerar_desenho and len(pilares_processados) > 0:
             caminho_alvo = caminho_saida_desenho or "GABARITO.DWG"
+            escala_req = kwargs.get("escala")
             if caminho_alvo.lower().endswith(".dwg"):
                 builder_dwg = TQSDwgPlantaDeCargasBuilder()
-                arquivo_desenho_gerado = builder_dwg.construir_planta_de_cargas(planta, caminho_alvo)
+                arquivo_desenho_gerado = builder_dwg.construir_planta_de_cargas(planta, caminho_alvo, escala=escala_req)
             else:
-                builder_dxf = PlantaDeCargasDwgBuilder(escala=50)
+                builder_dxf = PlantaDeCargasDwgBuilder(escala=escala_req or 50)
                 arquivo_desenho_gerado = builder_dxf.construir_planta_completa(planta, caminho_alvo)
 
             # A planta de cargas SEMPRE deve ficar na pasta ESPACIAL do edifício no TQS como GABARITO.DWG
+            caminho_backup_gerado = None
             if caminho_edificio and os.path.exists(caminho_edificio) and arquivo_desenho_gerado:
                 import shutil
+                from datetime import datetime
                 pasta_espacial = os.path.join(caminho_edificio, "ESPACIAL")
                 os.makedirs(pasta_espacial, exist_ok=True)
                 nome_arq = "GABARITO.DWG" if caminho_alvo.upper().endswith(".DWG") else os.path.basename(arquivo_desenho_gerado)
                 caminho_espacial_gerado = os.path.join(pasta_espacial, nome_arq)
+
+                # Backup automático de segurança da versão anterior caso já exista
+                if os.path.exists(caminho_espacial_gerado) and os.path.isfile(caminho_espacial_gerado):
+                    nome_base, ext = os.path.splitext(nome_arq)
+                    try:
+                        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        bkp_ts = os.path.join(pasta_espacial, f"{nome_base}_BKP_{ts}{ext}")
+                        shutil.copy2(caminho_espacial_gerado, bkp_ts)
+                        caminho_backup_gerado = bkp_ts
+                    except Exception:
+                        pass
+                    try:
+                        bkp_direto = os.path.join(pasta_espacial, f"{nome_base}_BKP{ext}")
+                        shutil.copy2(caminho_espacial_gerado, bkp_direto)
+                    except Exception:
+                        pass
+
                 try:
                     shutil.copyfile(arquivo_desenho_gerado, caminho_espacial_gerado)
                 except Exception:
-                    caminho_alt = os.path.join(pasta_espacial, "GABARITO_NOVO.DWG")
-                    try:
-                        shutil.copyfile(arquivo_desenho_gerado, caminho_alt)
-                        caminho_espacial_gerado = caminho_alt
-                    except Exception as e:
-                        print(f"[AVISO] Falha ao copiar para pasta ESPACIAL: {e}")
+                    for nome_alt in ["GABARITO_ATUALIZADO.DWG", "GABARITO_NOVO.DWG"]:
+                        caminho_alt = os.path.join(pasta_espacial, nome_alt)
+                        try:
+                            shutil.copyfile(arquivo_desenho_gerado, caminho_alt)
+                            caminho_espacial_gerado = caminho_alt
+                            break
+                        except Exception:
+                            continue
 
         # 4. Resumo estruturado para o Agente Cognitivo
         resumo_pilares = [
@@ -121,6 +143,7 @@ class PlantaDeCargasSkill(BaseSkill):
             "edificio": edificio_nome,
             "caminho_edificio": caminho_edificio,
             "caminho_espacial": caminho_espacial_gerado,
+            "caminho_backup": caminho_backup_gerado,
             "pavimento": pavimento_fundacao,
             "total_pilares_fundacao": len(pilares_processados),
             "pilares": resumo_pilares,

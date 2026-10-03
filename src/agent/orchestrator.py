@@ -1,5 +1,6 @@
 import json
-from typing import Dict, Any, List
+import re
+from typing import Dict, Any, List, Optional
 from src.agent.tools import ToolsRegistry
 
 SYSTEM_PROMPT_AUTQS = """
@@ -8,7 +9,7 @@ Você é o AUTQS Agent, um assistente inteligente e autônomo especialista em en
 Suas diretrizes fundamentais:
 1. RIGOR DE ENGENHARIA: Nunca invente ou alucine valores de cargas, coordenadas ou armaduras. Todos os dados numéricos devem vir exclusivamente de ferramentas (Tools) do TQS.
 2. NORMAS TÉCNICAS: Suas análises devem respeitar rigorosamente a NBR 6118 (estruturas de concreto) e NBR 6122 (fundações).
-3. MODULARIDADE: Você utiliza o sistema de Skills para acionar comandos no TQS (Planta de cargas, auditoria, alterações de modelo e emissão de pranchas).
+3. MODULARIDADE E OPERAÇÃO: Você utiliza ferramentas especializadas para consultar e editar elementos do Modelador Estrutural (Vigas, Lajes, Pilares e Cargas), além de emitir pranchas completas e gabaritos de locação no TQS.
 4. COMUNICAÇÃO: Seja objetivo, técnico e claro, utilizando a terminologia consagrada da engenharia estrutural brasileira (Nk, ELS, ELU, Ponto Fixo, Baricentro, Baldrame).
 """
 
@@ -33,14 +34,15 @@ class AutqsAgentOrchestrator:
         Executa diretamente uma intenção mapeada ou despacha a tool adequada
         com extração inteligente de parâmetros em linguagem natural.
         """
-        import re
         from src.tqs_adapter.building_reader import TQSBuildingReader
 
-        params = params or {}
+        from src.tqs_adapter.model_editor import normalizar_texto
+
         cmd_lower = comando.lower()
+        cmd_norm = normalizar_texto(comando)
 
         # 1. Comando de listagem de edifícios
-        if any(k in cmd_lower for k in ["list", "quais"]) and any(k in cmd_lower for k in ["edif", "projet", "obra"]):
+        if any(k in cmd_norm for k in ["LIST", "QUAI", "MOSTR", "EXIB"]) and any(k in cmd_norm for k in ["EDIF", "PROJET", "OBRA"]) and not any(k in cmd_norm for k in ["PAVIMENT", "PISO", "VIGA", "LAJE", "PILAR", "CARGA"]):
             return {
                 "status": "sucesso",
                 "tipo": "listagem_edificios",
@@ -49,12 +51,10 @@ class AutqsAgentOrchestrator:
 
         # 2. Extração automática do edifício se não especificado explicitamente
         if "edificio_nome" not in params:
-            # Procura por código numérico de 2 a 4 dígitos (ex: "054", "049")
-            num_match = re.search(r'\b(\d{2,4})\b', comando)
+            num_match = re.search(r'\b(0\d{2}|\d{3,4})\b', comando)
             if num_match:
                 params["edificio_nome"] = num_match.group(1)
             else:
-                # Procura por termos-chave dos edifícios do sistema
                 eds = TQSBuildingReader.listar_edificios_disponiveis()
                 for ed in eds:
                     tokens = [w for w in re.split(r'[\s\-_\[\]]+', ed["nome"].lower()) if len(w) > 3]
@@ -62,10 +62,95 @@ class AutqsAgentOrchestrator:
                         params["edificio_nome"] = ed["nome"]
                         break
 
-        # 3. Geração de Planta de Cargas / Gabarito
+        # Fallback de edifício
+        if not params.get("edificio_nome"):
+            params["edificio_nome"] = "054"
+
+        # 3. Processamento Estrutural do Edifício (Pórtico Espacial ou Global)
+        # Ex: "processe o edifício 051", "calcular pórtico espacial", "rodar processamento global"
+        if any(k in cmd_norm for k in ["PROCESS", "CALCUL", "ROD", "EXECUT", "PORTIC", "RECALCUL"]) and any(k in cmd_norm for k in ["EDIFIC", "OBRA", "PROJET", "PORTIC", "ESTRUTUR", "MODEL"]):
+            if "global" in cmd_lower or "completo" in cmd_lower or "armadur" in cmd_lower:
+                params["tipo_processamento"] = "global"
+            else:
+                params["tipo_processamento"] = "portico_cargas"
+            return self.registry.executar_ferramenta("processar_edificio", params)
+
+        # 4. Listagem de pavimentos do modelador
+        if any(k in cmd_norm for k in ["PAVIMENT", "PISO", "PLANTA", "NIVEL", "NIVEIS"]) and any(k in cmd_norm for k in ["LIST", "QUAI", "MOSTR", "VER", "EXIB", "QUANT"]):
+            if not any(k in cmd_norm for k in ["VIGA", "LAJE", "PILAR"]):
+                return self.registry.executar_ferramenta("listar_pavimentos_modelo", params)
+
+        # 4. Edição de Viga no Modelador
+        # Ex: "mude a viga V1 para 20x60", "altere viga V12 b=20 h=60 no térreo"
+        if any(k in cmd_norm for k in ["MUD", "ALTER", "EDIT", "DEFIN", "TROC"]) and any(k in cmd_norm for k in ["VIGA"]):
+            v_match = re.search(r'\b[vV](\d+)\b', comando)
+            sec_match = re.search(r'(\d+)\s*[xX]\s*(\d+)', comando)
+            b_match = re.search(r'\bb\s*[:=]\s*(\d+)', cmd_lower)
+            h_match = re.search(r'\bh\s*[:=]\s*(\d+)', cmd_lower)
+
+            if v_match:
+                params["identificador_viga"] = f"V{v_match.group(1)}"
+            if sec_match:
+                params["b_cm"] = float(sec_match.group(1))
+                params["h_cm"] = float(sec_match.group(2))
+            else:
+                if b_match:
+                    params["b_cm"] = float(b_match.group(1))
+                if h_match:
+                    params["h_cm"] = float(h_match.group(1))
+
+            if "pavimento" not in params:
+                pav_match = re.search(r'(?:no|do|pavimento|piso)\s+([a-zA-Z0-9_\^]+(?:\s+[a-zA-Z0-9_\^]+)?)', cmd_lower)
+                params["pavimento"] = pav_match.group(1) if pav_match else "terreo"
+
+            return self.registry.executar_ferramenta("editar_viga_modelo", params)
+
+        # 5. Edição de Laje no Modelador
+        # Ex: "mude a laje L3 para espessura 14", "altere a laje L1 h=14", "carga acidental na laje L3 para 0.3"
+        if any(k in cmd_norm for k in ["MUD", "ALTER", "EDIT", "DEFIN", "APLIC", "ADIC"]) and any(k in cmd_norm for k in ["LAJE"]):
+            l_match = re.search(r'\b[lL](\d+)\b', comando)
+            if l_match:
+                params["identificador_laje"] = f"L{l_match.group(1)}"
+
+            esp_match = re.search(r'(?:espessura|h|esp)\s*(?:=|de|para)?\s*(\d+(?:[.,]\d+)?)', cmd_lower)
+            if esp_match:
+                params["espessura_cm"] = float(esp_match.group(1).replace(",", "."))
+
+            c_acid = re.search(r'(?:acidental|sobrecarga|acid|q)\s*(?:=|de|para)?\s*(\d+(?:[.,]\d+)?)', cmd_lower)
+            if c_acid:
+                params["carga_acidental_tf_m2"] = float(c_acid.group(1).replace(",", "."))
+
+            c_perm = re.search(r'(?:permanente|perm|g)\s*(?:=|de|para)?\s*(\d+(?:[.,]\d+)?)', cmd_lower)
+            if c_perm:
+                params["carga_permanente_tf_m2"] = float(c_perm.group(1).replace(",", "."))
+
+            if "pavimento" not in params:
+                pav_match = re.search(r'(?:no|do|pavimento|piso)\s+([a-zA-Z0-9_\^]+(?:\s+[a-zA-Z0-9_\^]+)?)', cmd_lower)
+                params["pavimento"] = pav_match.group(1) if pav_match else "2"
+
+            return self.registry.executar_ferramenta("editar_laje_modelo", params)
+
+        # 6. Listagem de elementos de um pavimento (vigas, lajes, pilares)
+        if any(k in cmd_norm for k in ["LIST", "QUAI", "MOSTR", "VER", "EXIB"]) and any(k in cmd_norm for k in ["VIGA", "LAJE", "PILAR", "CARGA"]):
+            if "pavimento" not in params:
+                pav_match = re.search(r'(?:no|do|pavimento|piso)\s+([a-zA-Z0-9_\^]+(?:\s+[a-zA-Z0-9_\^]+)?)', cmd_lower)
+                params["pavimento"] = pav_match.group(1) if pav_match else "terreo"
+
+            if "viga" in cmd_lower:
+                params["tipo_elemento"] = "vigas"
+            elif "laje" in cmd_lower:
+                params["tipo_elemento"] = "lajes"
+            elif "pilar" in cmd_lower:
+                params["tipo_elemento"] = "pilares"
+            elif "carga" in cmd_lower:
+                params["tipo_elemento"] = "cargas"
+            else:
+                params["tipo_elemento"] = "todos"
+
+            return self.registry.executar_ferramenta("listar_elementos_pavimento", params)
+
+        # 7. Geração de Planta de Cargas / Gabarito
         if "planta" in cmd_lower or "carga" in cmd_lower or "gabarito" in cmd_lower:
-            if not params.get("edificio_nome"):
-                params["edificio_nome"] = "054" # fallback
             if "caminho_saida_desenho" not in params:
                 params["caminho_saida_desenho"] = "GABARITO.DWG"
             return self.registry.executar_ferramenta("gerar_planta_de_cargas", params)

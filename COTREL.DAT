@@ -1,0 +1,10 @@
+    0.2000	Altura de texto em cm
+    0.3000	Altura do bloco em cm
+         0	(0) Direita (1) Esquerda
+         0	(0) em cima (1) em baixo
+         0	(1) valores em modulo
+        21	Nivel de desenho
+       100	Nivel invisivel
+$COTREL
+         1	Casas depois da virgula
+    1.0000	Multiplic dimensoes

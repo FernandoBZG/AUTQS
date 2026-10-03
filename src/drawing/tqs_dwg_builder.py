@@ -1,4 +1,5 @@
 import os
+import ctypes
 import json
 import math
 from typing import List, Optional, Tuple, Dict, Any
@@ -115,17 +116,119 @@ class TQSDwgPlantaDeCargasBuilder:
                             break
                 self.template_dwg = seed
 
+        # Conexão com MDWG.DLL e IPOCOTREL.dll para emissão de cotas relativas nativas do TQS
+        self._mdwg_dll = None
+        for dll_cand in [
+            r"C:\TQSW\EXEC\X64\MDWG.DLL",
+            r"C:\TQSW\EXEC\MDWG.DLL",
+            r"D:\TQSW\EXEC\X64\MDWG.DLL",
+            r"D:\TQSW\EXEC\MDWG.DLL",
+        ]:
+            if os.path.exists(dll_cand):
+                try:
+                    self._mdwg_dll = ctypes.CDLL(dll_cand)
+                    self._mdwg_dll.g_edmexdefcotrel.argtypes = [ctypes.c_void_p, ctypes.c_double, ctypes.c_double, ctypes.c_double]
+                    break
+                except Exception:
+                    pass
+
+        self._ipo_dll = None
+        for dll_cand in [
+            r"C:\TQSW\EXEC\X64\IPOCOTREL.dll",
+            r"C:\TQSW\EXEC\IPOCOTREL.dll",
+            r"D:\TQSW\EXEC\X64\IPOCOTREL.dll",
+            r"D:\TQSW\EXEC\IPOCOTREL.dll",
+        ]:
+            if os.path.exists(dll_cand):
+                try:
+                    self._ipo_dll = ctypes.CDLL(dll_cand)
+                    break
+                except Exception:
+                    pass
+
+    @staticmethod
+    def _assegurar_cotrel_normativo(pasta_execucao: str = ""):
+        """
+        Garante que o arquivo de critérios de cotas relativas (COTREL.DAT)
+        utilize a altura mínima normativa de 0.20 cm no papel (2.0 mm),
+        evitando que o IPOCOTREL.dll gere cotas com altura inferior.
+        """
+        conteudo_cotrel = (
+            "    0.2000\tAltura de texto em cm\n"
+            "    0.3000\tAltura do bloco em cm\n"
+            "         0\t(0) Direita (1) Esquerda\n"
+            "         0\t(0) em cima (1) em baixo\n"
+            "         0\t(1) valores em modulo\n"
+            "        21\tNivel de desenho\n"
+            "       100\tNivel invisivel\n"
+            "$COTREL\n"
+            "         1\tCasas depois da virgula\n"
+            "    1.0000\tMultiplic dimensoes\n"
+        )
+        caminhos = ["COTREL.DAT"]
+        if pasta_execucao and os.path.isdir(pasta_execucao):
+            caminhos.append(os.path.join(pasta_execucao, "COTREL.DAT"))
+        for c in caminhos:
+            try:
+                with open(c, "w", encoding="latin-1") as f:
+                    f.write(conteudo_cotrel)
+            except Exception:
+                pass
+
     def construir_planta_de_cargas(
         self,
         planta: PlantaDeCargasModel,
         arquivo_saida_dwg: str,
-        escala: int = 50,
+        escala: Optional[int] = None,
     ) -> str:
         """
         Gera a folha .DWG nativa do TQS adaptada automaticamente a qualquer edifício.
+        Garante que a escala do arquivo (dwg.settings.scale) corresponda exatamente à
+        escala dos elementos desenhados e que todos os textos tenham altura >= 0.20 cm no papel.
         """
         if not planta.pilares:
             raise ValueError(f"Edifício {planta.edificio_nome} não possui pilares de fundação carregados.")
+
+        # Garante critério de cotas relativas normativo (h >= 0.20 cm no papel)
+        pasta_ed = planta.caminho_edificio or os.path.dirname(arquivo_saida_dwg)
+        self._assegurar_cotrel_normativo(pasta_ed)
+
+        # 1. Análise Geométrica Dinâmica do Edifício
+        bounds_planta = self._calcular_bounding_box_pilares(planta.pilares)
+        min_xp, max_xp, min_yp, max_yp = bounds_planta
+        larg_locacao = max_xp - min_xp
+        alt_locacao = max_yp - min_yp
+
+        dados_porlid = planta.dados_porlid
+        num_casos = len(dados_porlid.get("casos", [])) if dados_porlid and dados_porlid.get("casos") else (dados_porlid.get("num_casos", 1) if dados_porlid else 1)
+        num_pilares = len(planta.pilares)
+
+        # 2. Definição Prévia da Escala (se não especificada explicitamente)
+        if escala is None:
+            escala = 50
+            for esc_cand in [50, 75, 100]:
+                f_esc = esc_cand / 50.0
+                w_bar_est = 735.0 * f_esc
+                w_cargas_est = (num_casos * 515.0 + (num_casos - 1) * 35.0) * f_esc if num_casos > 1 else 1220.0 * f_esc
+                w_notas_est = 2700.0 * f_esc
+                h_tab_est = (num_pilares * 22.0 + 100.0) * f_esc
+                h_notas_est = 1120.0 * f_esc
+
+                # 1. Verifica se cabe em LAYOUT_ABAIXO (Tabelas e Notas lado a lado sob a locação)
+                w_abaixo_tot = max(larg_locacao, w_bar_est + (80.0 * f_esc) + w_cargas_est + (80.0 * f_esc) + w_notas_est)
+                h_abaixo_tot = alt_locacao + (260.0 * f_esc) + (160.0 * f_esc) + max(h_tab_est, h_notas_est)
+                if (w_abaixo_tot + 7.5 * esc_cand) / esc_cand <= 180.0 and (h_abaixo_tot + 6.0 * esc_cand) / esc_cand <= 84.1:
+                    escala = esc_cand
+                    break
+
+                # 2. Verifica se cabe em LAYOUT_LATERAL (Baricentro e Cargas no topo direito, Notas abaixo)
+                w_lat_tot = larg_locacao + (180.0 * f_esc) + max(w_bar_est + (60.0 * f_esc) + w_cargas_est, w_notas_est)
+                h_lat_tot = max(alt_locacao + (260.0 * f_esc), h_tab_est + (70.0 * f_esc) + h_notas_est)
+                if (w_lat_tot + 7.5 * esc_cand) / esc_cand <= 180.0 and (h_lat_tot + 6.0 * esc_cand) / esc_cand <= 84.1:
+                    escala = esc_cand
+                    break
+
+        fator_esc = escala / 50.0
 
         dwg = TQSDwg.Dwg(pedmv=0)
         
@@ -149,106 +252,145 @@ class TQSDwgPlantaDeCargasBuilder:
             for p in posicoes:
                 dwg.edit.Erase(p)
 
-        # 1. Análise Geométrica Dinâmica do Edifício
-        bounds_planta = self._calcular_bounding_box_pilares(planta.pilares)
-        min_xp, max_xp, min_yp, max_yp = bounds_planta
-        larg_locacao = max_xp - min_xp
-        alt_locacao = max_yp - min_yp
+        # Configura no cabeçalho nativo do DWG a escala oficial e tamanho das cotas
+        dwg.settings.scale = float(escala)
+        dwg.dim.dimtxt = 0.20
 
-        # 2. Desenha a Planta de Locação dos Pilares nas suas coordenadas originais
+        # Redefine a origem das cotas relativas (IPOCOTREL) para a origem global (0, 0, 0)
+        if self._mdwg_dll is not None and hasattr(dwg, "m_pedmv") and dwg.m_pedmv:
+            try:
+                self._mdwg_dll.g_edmexdefcotrel(
+                    ctypes.c_void_p(dwg.m_pedmv),
+                    ctypes.c_double(0.0),
+                    ctypes.c_double(0.0),
+                    ctypes.c_double(0.0),
+                )
+            except Exception:
+                pass
+
+        # 3. Desenha a Planta de Locação dos Pilares nas suas coordenadas originais
         self._desenhar_pilares_locacao(dwg, planta.pilares, bounds_planta, escala=escala)
 
-        # 3. Disposição Inteligente das Tabelas para Enquadramento em Molduras Padrão TQS
-        dados_porlid = planta.dados_porlid
-        num_casos = dados_porlid.get("num_casos", 1) if dados_porlid else 1
-        larg_tabela_cargas_est = (num_casos * 515.0 + (num_casos - 1) * 35.0) if num_casos > 1 else 1220.0
-        alt_tabela_est = len(planta.pilares) * 22.0 + 180.0
+        # 4. Disposição Inteligente das Tabelas para Enquadramento em Molduras Padrão TQS
+        w_bar_est = 735.0 * fator_esc
+        w_cargas_est = (num_casos * 515.0 + (num_casos - 1) * 35.0) * fator_esc if num_casos > 1 else 1220.0 * fator_esc
+        w_notas_est = 2700.0 * fator_esc
+        h_tab_est = (num_pilares * 22.0 + 100.0) * fator_esc
+        h_notas_est = 1120.0 * fator_esc
 
-        larg_total_lado = larg_locacao + 250.0 + max(larg_tabela_cargas_est, 1260.0)
-        alt_total_abaixo = alt_locacao + 180.0 + alt_tabela_est
+        # Teste se cabe em LAYOUT_ABAIXO
+        w_abaixo_tot = max(larg_locacao, w_bar_est + (80.0 * fator_esc) + w_cargas_est + (80.0 * fator_esc) + w_notas_est)
+        h_abaixo_tot = alt_locacao + (260.0 * fator_esc) + (160.0 * fator_esc) + max(h_tab_est, h_notas_est)
+        cabe_abaixo = ((w_abaixo_tot + 7.5 * escala) / escala <= 180.0 and (h_abaixo_tot + 6.0 * escala) / escala <= 84.1)
 
-        # Verifica se o arranjo lateral (lado a lado) cabe na folha máxima do TQS (180 cm de largura) na escala inicial
-        if (larg_total_lado / escala) <= 172.0:
-            layout_modo = "lado_a_lado"
-        elif (larg_locacao / escala) <= 172.0 and (alt_total_abaixo / escala) <= 80.0:
-            # Edifício muito extenso em X (como Jardim Europa): dispõe as tabelas horizontalmente abaixo da locação
+        # Edifícios horizontalmente alongados ou com altura compatível usam layout ABAIXO
+        if cabe_abaixo:
             layout_modo = "abaixo"
         else:
-            layout_modo = "lado_a_lado"
+            layout_modo = "lateral"
 
-        if layout_modo == "lado_a_lado":
-            x_tabelas = max_xp + 250.0 # 2.5 m de afastamento lateral
-            y_topo_tabelas = max_yp + 50.0
+        if layout_modo == "abaixo":
+            # =========================================================================
+            # LAYOUT ABAIXO: Locação no topo; Baricentros, Cargas e Notas lado a lado abaixo
+            # Perfeito para edifícios horizontais (ex: Jardim Europa), preenchendo a folha
+            # de forma contínua e eliminando completamente vazios inferiores ou transbordamentos.
+            # =========================================================================
+            espaco_v_loc_tab = 160.0 * fator_esc
+            y_topo_tabelas = min_yp - espaco_v_loc_tab
+            espaco_inter = 80.0 * fator_esc
 
-            # Tabela de Baricentros
+            larg_total_inferior = w_bar_est + espaco_inter + w_cargas_est + espaco_inter + w_notas_est
+            if larg_total_inferior > larg_locacao:
+                delta_x = (larg_total_inferior - larg_locacao) / 2.0
+                x_base = min_xp - delta_x
+            else:
+                delta_x = (larg_locacao - larg_total_inferior) / 2.0
+                x_base = min_xp + delta_x
+
+            # 1. Tabela de Baricentros
+            x_bar = x_base
             y_fim_bar, larg_tabela_bar = self._desenhar_tabela_baricentros(
-                dwg, planta.pilares, x_start=x_tabelas, y_start=y_topo_tabelas
+                dwg, planta.pilares, x_start=x_bar, y_start=y_topo_tabelas, escala=escala
             )
 
-            # Tabela de Cargas (logo abaixo da de baricentros)
-            y_topo_cargas = y_fim_bar - 70.0
-            y_fim_cargas, larg_tabela_cargas = self._desenhar_tabela_cargas(
-                dwg,
-                pilares=planta.pilares,
-                x_start=x_tabelas,
-                y_start=y_topo_cargas,
-                dados_porlid=planta.dados_porlid,
-            )
-
-            # Notas, Convenção de Sinais e Legenda (logo abaixo das cargas)
-            y_topo_notas = y_fim_cargas - 70.0
-            y_fim_notas = self._desenhar_notas_e_legendas(
-                dwg, x_start=x_tabelas, y_start=y_topo_notas, dados_porlid=planta.dados_porlid
-            )
-
-            largura_max_tabelas = max(larg_tabela_bar, larg_tabela_cargas, 2720.0)
-            bounds_conteudo = (
-                min_xp,
-                x_tabelas + largura_max_tabelas,
-                min(min_yp, y_fim_notas),
-                max(max_yp + 260.0, y_topo_tabelas + 100.0),
-            )
-        else:
-            # layout_modo == "abaixo" (Tabelas dispostas lado a lado horizontalmente sob a locação)
-            y_topo_tabelas = min_yp - 120.0
-            x_cargas = min_xp
-
-            # 1. Tabela de Cargas (alinhada à esquerda)
+            # 2. Tabela de Cargas (ao lado da de baricentros)
+            x_cargas = x_bar + larg_tabela_bar + espaco_inter
             y_fim_cargas, larg_tabela_cargas = self._desenhar_tabela_cargas(
                 dwg,
                 pilares=planta.pilares,
                 x_start=x_cargas,
                 y_start=y_topo_tabelas,
                 dados_porlid=planta.dados_porlid,
+                escala=escala,
             )
 
-            # 2. Tabela de Baricentros (ao lado direito da de cargas)
-            x_bar = x_cargas + larg_tabela_cargas + 80.0
-            y_fim_bar, larg_tabela_bar = self._desenhar_tabela_baricentros(
-                dwg, planta.pilares, x_start=x_bar, y_start=y_topo_tabelas
-            )
-
-            # 3. Notas, Convenção de Sinais e Legenda (ao lado da de baricentros)
-            x_notas = x_bar + larg_tabela_bar + 80.0
+            # 3. Notas, Convenção de Sinais e Legenda (ao lado da de cargas)
+            x_notas = x_cargas + larg_tabela_cargas + espaco_inter
             y_fim_notas = self._desenhar_notas_e_legendas(
-                dwg, x_start=x_notas, y_start=y_topo_tabelas, dados_porlid=planta.dados_porlid
+                dwg, x_start=x_notas, y_start=y_topo_tabelas, dados_porlid=planta.dados_porlid, escala=escala
             )
 
-            x_max_conteudo = max(max_xp, x_notas + 2720.0)
-            y_min_conteudo = min(y_fim_cargas, y_fim_bar, y_fim_notas)
+            larg_notas_real = 2700.0 * fator_esc
+            bounds_conteudo = (
+                min(min_xp, x_bar),
+                max(max_xp, x_notas + larg_notas_real),
+                min(y_fim_bar, y_fim_cargas, y_fim_notas),
+                max_yp + (260.0 * fator_esc),
+            )
+        else:
+            # =========================================================================
+            # LAYOUT LATERAL (2 Colunas): Para edifícios compactos/verticais (ex: Visconde)
+            # Locação à esquerda; à direita:
+            #   - Topo: Tabela de Baricentros e Tabela de Cargas lado a lado
+            #   - Abaixo: Notas, Convenção de Sinais e Legendas
+            # Altura do bloco lateral harmoniza perfeitamente com a altura da locação.
+            # =========================================================================
+            x_start_dir = max_xp + (180.0 * fator_esc)
+            y_topo_tabelas = max_yp + (50.0 * fator_esc)
+            espaco_inter = 60.0 * fator_esc
+
+            # 1. Tabela de Baricentros (coluna 1 da direita)
+            x_bar = x_start_dir
+            y_fim_bar, larg_tabela_bar = self._desenhar_tabela_baricentros(
+                dwg, planta.pilares, x_start=x_bar, y_start=y_topo_tabelas, escala=escala
+            )
+
+            # 2. Tabela de Cargas (coluna 2 da direita, alinhada no topo com Baricentros)
+            x_cargas = x_bar + larg_tabela_bar + espaco_inter
+            y_fim_cargas, larg_tabela_cargas = self._desenhar_tabela_cargas(
+                dwg,
+                pilares=planta.pilares,
+                x_start=x_cargas,
+                y_start=y_topo_tabelas,
+                dados_porlid=planta.dados_porlid,
+                escala=escala,
+            )
+
+            # 3. Notas, Convenção de Sinais e Legenda (diretamente abaixo de Baricentros e Cargas)
+            y_topo_notas = min(y_fim_bar, y_fim_cargas) - (70.0 * fator_esc)
+            x_notas = x_start_dir
+            y_fim_notas = self._desenhar_notas_e_legendas(
+                dwg, x_start=x_notas, y_start=y_topo_notas, dados_porlid=planta.dados_porlid, escala=escala
+            )
+
+            larg_notas_real = 2700.0 * fator_esc
+            larg_dir_total = max(larg_tabela_bar + espaco_inter + larg_tabela_cargas, larg_notas_real)
             bounds_conteudo = (
                 min_xp,
-                x_max_conteudo,
-                y_min_conteudo,
-                max_yp + 260.0,
+                x_start_dir + larg_dir_total,
+                min(min_yp - (70.0 * fator_esc), y_fim_notas),
+                max(max_yp + (260.0 * fator_esc), y_topo_tabelas + (60.0 * fator_esc)),
             )
 
-        # 4. Seleção Automática e Desenho da Moldura Catalogada Oficial TQS
+        # 5. Seleção Automática e Desenho da Moldura Catalogada Oficial TQS
         formato_escolhido, escala_final = self._auto_selecionar_e_desenhar_moldura(
-            dwg, bounds_conteudo, escala_inicial=escala, planta=planta
+            dwg, bounds_conteudo, escala=escala, planta=planta
         )
 
-        # 5. Salva o arquivo nativo TQS .DWG
+        # 6. Salva o arquivo nativo TQS .DWG (com backup de segurança se já existir)
+        if os.path.exists(arquivo_saida_dwg) and os.path.isfile(arquivo_saida_dwg):
+            self._criar_backup_seguranca(arquivo_saida_dwg)
+
         pasta_destino = os.path.dirname(arquivo_saida_dwg)
         if pasta_destino and not os.path.exists(pasta_destino):
             os.makedirs(pasta_destino, exist_ok=True)
@@ -257,6 +399,40 @@ class TQSDwgPlantaDeCargasBuilder:
         dwg.file.Close()
 
         return arquivo_saida_dwg
+
+    @staticmethod
+    def _criar_backup_seguranca(caminho_arquivo: str) -> Optional[str]:
+        """
+        Cria cópia de backup do arquivo DWG existente antes de sobrescrever.
+        Gera uma cópia com timestamp histórico (ex: GABARITO_BKP_20261002_140728.DWG)
+        e atualiza GABARITO_BKP.DWG para consulta rápida.
+        """
+        import shutil
+        from datetime import datetime
+        try:
+            if not os.path.exists(caminho_arquivo) or not os.path.isfile(caminho_arquivo):
+                return None
+            pasta = os.path.dirname(caminho_arquivo)
+            nome_completo = os.path.basename(caminho_arquivo)
+            nome_base, ext = os.path.splitext(nome_completo)
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            nome_bkp_ts = f"{nome_base}_BKP_{ts}{ext}"
+            caminho_bkp_ts = os.path.join(pasta, nome_bkp_ts) if pasta else nome_bkp_ts
+            try:
+                shutil.copy2(caminho_arquivo, caminho_bkp_ts)
+            except Exception:
+                caminho_bkp_ts = None
+
+            nome_bkp_direto = f"{nome_base}_BKP{ext}"
+            caminho_bkp_direto = os.path.join(pasta, nome_bkp_direto) if pasta else nome_bkp_direto
+            try:
+                shutil.copy2(caminho_arquivo, caminho_bkp_direto)
+            except Exception:
+                pass
+
+            return caminho_bkp_ts
+        except Exception:
+            return None
 
     def _calcular_bounding_box_pilares(self, pilares: List[PilarFundacao]) -> Tuple[float, float, float, float]:
         """Calcula os limites espaciais reais [min_x, max_x, min_y, max_y] do conjunto de pilares."""
@@ -275,6 +451,7 @@ class TQSDwgPlantaDeCargasBuilder:
         self,
         pilar: PilarFundacao,
         todos_pilares: List[PilarFundacao],
+        fator_esc: float = 1.0,
     ) -> Tuple[float, float, float, float]:
         """
         Calcula a posição do bloco de rótulo (Título + Dimensão logo abaixo)
@@ -314,14 +491,14 @@ class TQSDwgPlantaDeCargasBuilder:
                 break
 
         if tem_vizinho_direita:
-            x_nome = min_x - 55.0
-            y_nome = min_y - 12.0
+            x_nome = min_x - (70.0 * fator_esc)
+            y_nome = min_y - (20.0 * fator_esc)
         else:
-            x_nome = max_x + 8.0
-            y_nome = min_y - 12.0
+            x_nome = max_x + (20.0 * fator_esc)
+            y_nome = min_y - (22.0 * fator_esc)
 
         x_dim = x_nome
-        y_dim = y_nome - 22.0
+        y_dim = y_nome - (20.0 * fator_esc)
 
         return x_nome, y_nome, x_dim, y_dim
 
@@ -338,37 +515,60 @@ class TQSDwgPlantaDeCargasBuilder:
           Nível 222, Altura 60.0: 'GABARITO E CARGAS NAS FUNDAÇÕES'
           Nível 250, Altura 22.5: 'ESCALA 1:50' posicionado diretamente abaixo
         - Contorno retangular ou poligonal fechado (Nível 3)
-        - Cruz de baricentro (Nível 21)
-        - Nome do pilar (Nível 9, H=18.0) fora do contorno
-        - Dimensões da seção (Nível 12, H=13.5) diretamente abaixo do nome
+        - Linhas azuis em cruz cruzando 50 cm do limite do pilar em todas as 4 direções (Nível 21)
+        - Cotas relativas das coordenadas X e Y do baricentro com triângulos indicadores (Nível 21)
+        - Nome do pilar (Nível 9, H=21.0) posicionado no quadrante inferior direito
+        - Dimensões da seção (Nível 12, H=15.0) diretamente abaixo do nome
         """
         min_x, max_x, min_y, max_y = bounds
         cx_planta = (min_x + max_x) / 2.0
 
+        fator_esc = escala / 50.0
+        h_min_normativo = 0.20 * escala
+
         # Título Oficial (Padrão Oficial TQS GEO_CARGAS / Zuckhan Soledade)
-        # Nível 222, Tamanho 60.0: GABARITO E CARGAS NAS FUNDAÇÕES
-        y_titulo = max_y + 160.0
-        larg_titulo_est = 1860.0
-        if (max_x - min_x) > (larg_titulo_est + 400.0):
-            x_titulo = min_x + 100.0
+        # Nível 222, Tamanho 60.0 * fator_esc: GABARITO E CARGAS NAS FUNDAÇÕES
+        y_titulo = max_y + (160.0 * fator_esc)
+        larg_titulo_est = 1860.0 * fator_esc
+        if (max_x - min_x) > (larg_titulo_est + (400.0 * fator_esc)):
+            x_titulo = min_x + (100.0 * fator_esc)
         else:
             x_titulo = max(min_x, cx_planta - (larg_titulo_est / 2.0))
 
         dwg.draw.level = 222
-        dwg.draw.Text(x_titulo, y_titulo, 60.0, 0.0, "GABARITO E CARGAS NAS FUNDAÇÕES")
+        dwg.draw.Text(x_titulo, y_titulo, 60.0 * fator_esc, 0.0, "GABARITO E CARGAS NAS FUNDAÇÕES")
 
-        # Texto indicando escala na posição abaixo conforme padrão GEO_CARGAS (Nível 250, Tamanho 22.5)
-        y_escala = y_titulo - 36.8
-        x_escala = x_titulo + 9.5
+        # Texto indicando escala na posição abaixo conforme padrão GEO_CARGAS (Nível 250, Tamanho 22.5 * fator_esc)
+        y_escala = y_titulo - (36.8 * fator_esc)
+        x_escala = x_titulo + (9.5 * fator_esc)
         dwg.draw.level = 250
-        dwg.draw.Text(x_escala, y_escala, 22.5, 0.0, f"ESCALA 1:{escala}")
+        dwg.draw.Text(x_escala, y_escala, 22.5 * fator_esc, 0.0, f"ESCALA 1:{escala}")
 
-        raio_cruz = 18.0
+        # Precomputa os limites espaciais (faces) de cada pilar para análise de vizinhança
+        pilar_bounds = {}
+        for p in pilares:
+            geom = p.geometria
+            cg = p.baricentro
+            vts = geom.vertices_poligono
+            if vts and len(vts) >= 3:
+                min_px = min(pt[0] for pt in vts)
+                max_px = max(pt[0] for pt in vts)
+                min_py = min(pt[1] for pt in vts)
+                max_py = max(pt[1] for pt in vts)
+            else:
+                w = geom.b if geom.b > 0 else 20.0
+                h = geom.h if geom.h > 0 else 20.0
+                min_px = cg.x - w / 2.0
+                max_px = cg.x + w / 2.0
+                min_py = cg.y - h / 2.0
+                max_py = cg.y + h / 2.0
+            pilar_bounds[p.nome] = (min_px, max_px, min_py, max_py)
 
         for p in pilares:
             geom = p.geometria
             cg = p.baricentro
             vts = geom.vertices_poligono
+            min_px, max_px, min_py, max_py = pilar_bounds[p.nome]
 
             # 1. Contorno do Pilar (Polilinha fechada de N vértices - Nível 3)
             dwg.draw.level = 3
@@ -379,33 +579,178 @@ class TQSDwgPlantaDeCargasBuilder:
                 dwg.draw.PolyEnterPoint(vts[0][0], vts[0][1])
                 dwg.draw.Polyline()
             else:
-                w = geom.b if geom.b > 0 else 20.0
-                h = geom.h if geom.h > 0 else 20.0
-                x0 = cg.x - w / 2.0
-                y0 = cg.y - h / 2.0
                 dwg.draw.PolyStart()
-                dwg.draw.PolyEnterPoint(x0, y0)
-                dwg.draw.PolyEnterPoint(x0 + w, y0)
-                dwg.draw.PolyEnterPoint(x0 + w, y0 + h)
-                dwg.draw.PolyEnterPoint(x0, y0 + h)
-                dwg.draw.PolyEnterPoint(x0, y0)
+                dwg.draw.PolyEnterPoint(min_px, min_py)
+                dwg.draw.PolyEnterPoint(max_px, min_py)
+                dwg.draw.PolyEnterPoint(max_px, max_py)
+                dwg.draw.PolyEnterPoint(min_px, max_py)
+                dwg.draw.PolyEnterPoint(min_px, min_py)
                 dwg.draw.Polyline()
 
-            # 2. Baricentro - Ponto de Carga (Cruz no Nível 21)
-            dwg.draw.level = 21
-            dwg.draw.Line(cg.x - raio_cruz, cg.y, cg.x + raio_cruz, cg.y)
-            dwg.draw.Line(cg.x, cg.y - raio_cruz, cg.x, cg.y + raio_cruz)
-            dwg.draw.Circle(cg.x, cg.y, 3.0)
+            # Análise geométrica de vizinhança para eixos e cotas (evita embolamento em pilares gêmeos/juntas)
+            # A) Vizinhança horizontal no mesmo eixo Y:
+            vizinho_dir_y = None
+            vizinho_esq_y = None
+            # B) Vizinhança vertical no mesmo eixo X:
+            vizinho_cima_x = None
+            vizinho_baixo_x = None
+            for outro in pilares:
+                if outro.nome == p.nome:
+                    continue
+                o_min_px, o_max_px, o_min_py, o_max_py = pilar_bounds[outro.nome]
+                if abs(cg.y - outro.baricentro.y) < 2.0:
+                    if 0.0 <= (o_min_px - max_px) < 80.0:
+                        vizinho_dir_y = outro
+                    elif 0.0 <= (min_px - o_max_px) < 80.0:
+                        vizinho_esq_y = outro
+                if abs(cg.x - outro.baricentro.x) < 2.0:
+                    if 0.0 <= (o_min_py - max_py) < 80.0:
+                        vizinho_cima_x = outro
+                    elif 0.0 <= (min_py - o_max_py) < 80.0:
+                        vizinho_baixo_x = outro
 
-            # 3. Rótulo inteligente: Nome no Nível 9 e Dimensão no Nível 12 embaixo
-            xn, yn, xd, yd = self._calcular_posicao_rotulo_pilar(p, pilares)
+            # C) Escalonamento vertical para eixos X próximos (< 60 cm):
+            stagger_count_x = 0
+            for outro in pilares:
+                if outro.nome == p.nome:
+                    continue
+                o_min_px, o_max_px, o_min_py, o_max_py = pilar_bounds[outro.nome]
+                if 0.0 < (cg.x - outro.baricentro.x) < 60.0 and abs(max_py - o_max_py) < 80.0:
+                    stagger_count_x += 1
+            stagger_dy = stagger_count_x * 115.0
+
+            # D) Escalonamento horizontal para eixos Y próximos (< 60 cm):
+            stagger_count_y = 0
+            for outro in pilares:
+                if outro.nome == p.nome:
+                    continue
+                o_min_px, o_max_px, o_min_py, o_max_py = pilar_bounds[outro.nome]
+                if 0.0 < (cg.y - outro.baricentro.y) < 60.0 and abs(max_px - o_max_px) < 80.0:
+                    stagger_count_y += 1
+            stagger_dx = stagger_count_y * 115.0
+
+            # 2. Linhas azuis em cruz cruzando 50 cm do limite do pilar (Nível 21)
+            dwg.draw.level = 21
+            # Eixo horizontal: cruza 50 cm à esquerda se não houver vizinho, ou conecta ao vizinho da esquerda
+            x_lin_ini = (min_px - 50.0) if not vizinho_esq_y else min_px
+            # Cruza 50 cm à direita se não houver vizinho, ou conecta ao vizinho da direita
+            if vizinho_dir_y:
+                o_min_px = pilar_bounds[vizinho_dir_y.nome][0]
+                x_lin_fim = o_min_px  # conecta os pilares gêmeos cobrindo a junta sem invadir o corpo do vizinho
+            else:
+                x_lin_fim = max_px + 50.0 + stagger_dx
+            dwg.draw.Line(x_lin_ini, cg.y, x_lin_fim, cg.y)
+
+            # Eixo vertical: cruza 50 cm abaixo (ou conecta ao vizinho de baixo) e 50 cm (+ escalonamento) acima
+            y_lin_ini = (min_py - 50.0) if not vizinho_baixo_x else min_py
+            if vizinho_cima_x:
+                o_min_py = pilar_bounds[vizinho_cima_x.nome][2]
+                y_lin_topo = o_min_py
+            else:
+                y_lin_topo = max_py + 50.0 + stagger_dy
+            dwg.draw.Line(cg.x, y_lin_ini, cg.x, y_lin_topo)
+
+            # 3. Cotas Relativas Oficiais (Nível 21, Objeto Dinâmico Nativo do TQS: IPOCOTREL)
+            # Cota Y: só é emitida se NÃO houver pilar vizinho colado à direita no mesmo eixo
+            # (evita que a cota caia dentro do pilar vizinho ou sobreponha o mesmo valor de Y)
+            emitir_cota_y = (vizinho_dir_y is None)
+            xv_y = max_px + 25.0 + stagger_dx
+            yv_y = cg.y
+
+            # Cota X: só é emitida se NÃO houver pilar vizinho colado acima no mesmo eixo
+            # escalonada verticalmente por stagger_dy quando houver eixo paralelo colado
+            emitir_cota_x = (vizinho_cima_x is None)
+            xv_x = cg.x
+            yv_x = max_py + 25.0 + stagger_dy
+
+            criou_nativo = False
+            if self._ipo_dll is not None and hasattr(dwg, "m_pedmv") and dwg.m_pedmv:
+                try:
+                    pedmv = ctypes.c_void_p(dwg.m_pedmv)
+                    ret_obj = ctypes.c_void_p()
+                    ret_status = ctypes.c_int()
+
+                    # 3.1 Cota Y (Horizontal, sobre o prolongamento direito da linha horizontal)
+                    if emitir_cota_y:
+                        px_y = ctypes.c_double(xv_y)
+                        py_y = ctypes.c_double(yv_y)
+                        pz_y = ctypes.c_double(0.0)
+                        tipo_y = ctypes.c_int(0)
+                        self._ipo_dll.IPOCOTREL_CRIARPARATU(
+                            ctypes.byref(pedmv),
+                            ctypes.byref(px_y),
+                            ctypes.byref(py_y),
+                            ctypes.byref(pz_y),
+                            ctypes.byref(tipo_y),
+                            ctypes.byref(ret_obj),
+                            ctypes.byref(ret_status),
+                        )
+
+                    # 3.2 Cota X (Vertical, sobre o prolongamento superior da linha vertical com escalonamento)
+                    if emitir_cota_x:
+                        px_x = ctypes.c_double(xv_x)
+                        py_x = ctypes.c_double(yv_x)
+                        pz_x = ctypes.c_double(90.0)
+                        tipo_x = ctypes.c_int(1)
+                        self._ipo_dll.IPOCOTREL_CRIARPARATU(
+                            ctypes.byref(pedmv),
+                            ctypes.byref(px_x),
+                            ctypes.byref(py_x),
+                            ctypes.byref(pz_x),
+                            ctypes.byref(tipo_x),
+                            ctypes.byref(ret_obj),
+                            ctypes.byref(ret_status),
+                        )
+                    criou_nativo = True
+                except Exception:
+                    criou_nativo = False
+
+            if not criou_nativo:
+                h_cota = max(13.5 * fator_esc, h_min_normativo)
+                # Fallback vetorial idêntico caso IPOCOTREL.dll não esteja acessível no ambiente
+                if emitir_cota_y:
+                    val_y_num = round(cg.y, 1)
+                    val_y_str = f"{val_y_num:.1f}".rstrip("0").rstrip(".") if "." in f"{val_y_num:.1f}" else f"{val_y_num:.0f}"
+                    # Triângulo indicador apontando para baixo sobre a linha horizontal
+                    dwg.draw.Line(xv_y, yv_y, xv_y + (7.5 * fator_esc), yv_y + (15.0 * fator_esc))
+                    dwg.draw.Line(xv_y + (7.5 * fator_esc), yv_y + (15.0 * fator_esc), xv_y - (7.5 * fator_esc), yv_y + (15.0 * fator_esc))
+                    dwg.draw.Line(xv_y - (7.5 * fator_esc), yv_y + (15.0 * fator_esc), xv_y, yv_y)
+                    # Haste vertical
+                    dwg.draw.Line(xv_y, yv_y + (15.0 * fator_esc), xv_y, yv_y + (22.5 * fator_esc))
+                    # Prateleira horizontal à direita com comprimento proporcional ao texto
+                    tam_prat_y = max(50.0 * fator_esc, len(val_y_str) * h_cota)
+                    dwg.draw.Line(xv_y, yv_y + (22.5 * fator_esc), xv_y + tam_prat_y, yv_y + (22.5 * fator_esc))
+                    # Texto da cota Y (horizontal)
+                    dwg.draw.Text(xv_y, yv_y + (22.5 * fator_esc) + (3.4 * fator_esc), h_cota, 0.0, val_y_str)
+
+                if emitir_cota_x:
+                    val_x_num = round(cg.x, 1)
+                    val_x_str = f"{val_x_num:.1f}".rstrip("0").rstrip(".") if "." in f"{val_x_num:.1f}" else f"{val_x_num:.0f}"
+                    # Triângulo indicador apontando para a direita sobre a linha vertical
+                    dwg.draw.Line(xv_x, yv_x, xv_x - (15.0 * fator_esc), yv_x + (7.5 * fator_esc))
+                    dwg.draw.Line(xv_x - (15.0 * fator_esc), yv_x + (7.5 * fator_esc), xv_x - (15.0 * fator_esc), yv_x - (7.5 * fator_esc))
+                    dwg.draw.Line(xv_x - (15.0 * fator_esc), yv_x - (7.5 * fator_esc), xv_x, yv_x)
+                    # Haste horizontal para a esquerda
+                    dwg.draw.Line(xv_x - (15.0 * fator_esc), yv_x, xv_x - (22.5 * fator_esc), yv_x)
+                    # Prateleira vertical subindo com comprimento proporcional ao texto
+                    tam_prat_x = max(50.0 * fator_esc, len(val_x_str) * h_cota)
+                    dwg.draw.Line(xv_x - (22.5 * fator_esc), yv_x, xv_x - (22.5 * fator_esc), yv_x + tam_prat_x)
+                    # Texto da cota X (vertical a 90 graus)
+                    dwg.draw.Text(xv_x - (22.5 * fator_esc) - (3.4 * fator_esc), yv_x, h_cota, 90.0, val_x_str)
+
+            # 4. Rótulo inteligente: Nome no Nível 9 e Dimensão no Nível 12
+            xn, yn, xd, yd = self._calcular_posicao_rotulo_pilar(p, pilares, fator_esc=fator_esc)
+
+            # Padrão: 0.28 cm no nome do pilar e 0.20 cm na dimensão no papel
+            h_pilar_nome = 0.28 * escala
+            h_pilar_dim = 0.20 * escala
 
             dwg.draw.level = 9
-            dwg.draw.Text(xn, yn, 18.0, 0.0, p.nome)
+            dwg.draw.Text(xn, yn, h_pilar_nome, 0.0, p.nome)
 
             dwg.draw.level = 12
             dim_str = f"{int(round(geom.b))}x{int(round(geom.h))}"
-            dwg.draw.Text(xd, yd, 13.5, 0.0, dim_str)
+            dwg.draw.Text(xd, yd, h_pilar_dim, 0.0, dim_str)
 
     def _desenhar_tabela_baricentros(
         self,
@@ -413,61 +758,232 @@ class TQSDwgPlantaDeCargasBuilder:
         pilares: List[PilarFundacao],
         x_start: float,
         y_start: float,
+        escala: int = 50,
     ) -> Tuple[float, float]:
         """
-        Desenha a tabela de baricentros auto-dimensionada em N blocos paralelos.
+        Desenha as DUAS tabelas de baricentros de pilares lado a lado:
+          1. BARICENTRO DE PILARES (ORDENADO POR COORDENADAS)
+             - 4 colunas: PILAR | X (cm) | PILAR | Y (cm)
+             - Colunas 1 e 2 ordenadas por X crescente.
+             - Colunas 3 e 4 ordenadas por Y crescente.
+          2. BARICENTRO DE PILARES (ORDENADO POR PILARES)
+             - 3 colunas: PILAR | X (cm) | Y (cm)
+             - Ordenado naturalmente pela identificação dos pilares (P1, P2, P3...).
+
+        Regra de altura de texto:
+          - Tamanho mínimo de qualquer texto no papel: 0.20 cm (2.0 mm), independente da escala.
+          - Na escala 1:50, 0.20 cm no papel corresponde a 10.0 cm no desenho.
+          - Todas as grandezas textuais são parametrizadas por (escala / 50.0) garantindo h >= 0.20 * escala.
         Retorna (y_fim, largura_total).
         """
+        import re
+
+        def natural_sort_key(p):
+            return [int(text) if text.isdigit() else text.lower() for text in re.split(r"(\d+)", str(p.nome))]
+
+        # Ordenações oficiais
+        p_ord_x = sorted(
+            pilares,
+            key=lambda p: (round(p.baricentro.x, 1) if p.baricentro else 0.0, natural_sort_key(p)),
+        )
+        p_ord_y = sorted(
+            pilares,
+            key=lambda p: (round(p.baricentro.y, 1) if p.baricentro else 0.0, natural_sort_key(p)),
+        )
+        p_ord_nome = sorted(pilares, key=natural_sort_key)
+
         n_total = len(pilares)
-        # Calcula número de colunas dinamicamente (máximo de 25 linhas por coluna)
-        num_colunas = max(1, math.ceil(n_total / 25))
-        linhas_por_coluna = math.ceil(n_total / num_colunas)
 
-        largura_col_pilar = 110.0
-        largura_col_coord = 140.0
-        largura_bloco = largura_col_pilar + 2 * largura_col_coord # 390 cm
-        espaco_entre_blocos = 45.0
-        h_linha = 26.0
-        h_cabecalho = 30.0
+        # =====================================================================
+        # ALTURAS DE TEXTO (MÍNIMO RIGOROSO: 0.20 cm NO PAPEL, INDEPENDENTE DA ESCALA)
+        # =====================================================================
+        fator_esc = escala / 50.0
+        h_min_normativo = 0.20 * escala  # 10.0 cm para 1:50, 15.0 cm para 1:75, 20.0 cm para 1:100
 
-        largura_total = num_colunas * largura_bloco + (num_colunas - 1) * espaco_entre_blocos
+        # Alturas de texto no desenho
+        # Itens da tabela (nome de pilares, coordenadas) e cabeçalhos com a altura mínima normativa de 0.20 cm no papel
+        h_txt_dados = 0.20 * escala  # 10.0 cm para 1:50, 15.0 cm para 1:75 (exatamente 0.20 cm no papel)
+        h_txt_cab = 0.20 * escala    # Cabeçalho das colunas com altura mínima de 0.20 cm no papel
+        h_txt_tit = max(14.0 * fator_esc, h_min_normativo)
+        h_txt_sub = max(11.5 * fator_esc, h_min_normativo)
+
+        h_linha = 22.0 * fator_esc  # Idêntico à tabela de cargas para alinhamento horizontal
+        espaco_entre_tabelas = 35.0 * fator_esc
+
+        # =====================================================================
+        # GEOMETRIA E LARGURAS DAS COLUNAS (ENQUADRAMENTO DOS TÍTULOS)
+        # =====================================================================
+        # Tabela 1: ORDENADO POR COORDENADAS (4 colunas)
+        # PILAR (85), X (95), PILAR (85), Y (95) -> Total = 360.0 cm (* fator_esc)
+        # Subtítulo (26 chars * 11.5 = 299 cm) cabe perfeitamente com 30.5 cm de margem em cada lado
+        larguras_tab1 = [w * fator_esc for w in [85.0, 95.0, 85.0, 95.0]]
+        largura_tab1 = sum(larguras_tab1)  # 360.0 cm
+        x1_0 = x_start
+        x1_1 = x1_0 + largura_tab1
+
+        # Tabela 2: ORDENADO POR PILARES (3 colunas)
+        # PILAR (90), X (125), Y (125) -> Total = 340.0 cm (* fator_esc)
+        # Título principal (21 chars * 14.0 = 294 cm) cabe perfeitamente com 23.0 cm de margem em cada lado
+        # Subtítulo (22 chars * 11.5 = 253 cm) cabe perfeitamente com 43.5 cm de margem em cada lado
+        larguras_tab2 = [w * fator_esc for w in [90.0, 125.0, 125.0]]
+        largura_tab2 = sum(larguras_tab2)  # 340.0 cm
+        x2_0 = x1_1 + espaco_entre_tabelas
+        x2_1 = x2_0 + largura_tab2
+
+        largura_total = largura_tab1 + espaco_entre_tabelas + largura_tab2  # 735.0 cm (* fator_esc)
+
+        # Nivelamento vertical:
+        # y_grid_topo é o topo do cabeçalho das colunas (y_start - 56.0), idêntico à tabela de cargas
+        # y_dados_topo é o topo das linhas de dados (y_start - 94.0), idêntico à tabela de cargas
+        y_grid_topo = y_start - (56.0 * fator_esc)
+        h_caixa_titulo = 56.0 * fator_esc
+        y_top_bar = y_grid_topo + h_caixa_titulo
+        h_cabecalho_colunas = 38.0 * fator_esc
+        y_dados_topo = y_grid_topo - h_cabecalho_colunas
+
+        altura_dados = n_total * h_linha
+        y_fim = y_dados_topo - altura_dados
 
         dwg.draw.level = 0
-        dwg.draw.Text(x_start + (largura_total / 2.0) - 100.0, y_start + 45.0, 16.0, 0.0, "BARICENTRO DE PILARES")
-        dwg.draw.Text(x_start + (largura_total / 2.0) - 110.0, y_start + 25.0, 14.0, 0.0, "(ORDENADO POR PILARES)")
 
-        for col_idx in range(num_colunas):
-            sub_pilares = pilares[col_idx * linhas_por_coluna : (col_idx + 1) * linhas_por_coluna]
-            if not sub_pilares:
-                continue
+        # =====================================================================
+        # TABELA 1: ORDENADO POR COORDENADAS
+        # =====================================================================
+        # Linhas horizontais do cabeçalho
+        dwg.draw.Line(x1_0, y_top_bar, x1_1, y_top_bar)
+        dwg.draw.Line(x1_0, y_grid_topo, x1_1, y_grid_topo)
+        dwg.draw.Line(x1_0, y_dados_topo, x1_1, y_dados_topo)
 
-            bx0 = x_start + col_idx * (largura_bloco + espaco_entre_blocos)
-            by0 = y_start
+        # Textos de título da Tabela 1 rigorosamente centralizados e contidos na caixa
+        tit1 = "BARICENTRO DE PILARES"
+        w_tit1 = len(tit1) * h_txt_tit  # 21 * 14.0 = 294.0 cm
+        x_tit1 = x1_0 + ((largura_tab1 - w_tit1) / 2.0)
+        dwg.draw.Text(x_tit1, y_top_bar - (20.0 * fator_esc), h_txt_tit, 0.0, tit1)
 
-            dwg.draw.level = 0
-            dwg.draw.Line(bx0, by0, bx0 + largura_bloco, by0)
-            dwg.draw.Line(bx0, by0 - h_cabecalho, bx0 + largura_bloco, by0 - h_cabecalho)
-            
-            dwg.draw.Text(bx0 + 25.0, by0 - 21.0, 14.0, 0.0, "PILAR")
-            dwg.draw.Text(bx0 + largura_col_pilar + 35.0, by0 - 21.0, 14.0, 0.0, "X (cm)")
-            dwg.draw.Text(bx0 + largura_col_pilar + largura_col_coord + 35.0, by0 - 21.0, 14.0, 0.0, "Y (cm)")
+        sub1 = "(ORDENADO POR COORDENADAS)"
+        w_sub1 = len(sub1) * h_txt_sub  # 26 * 11.5 = 299.0 cm
+        x_sub1 = x1_0 + ((largura_tab1 - w_sub1) / 2.0)
+        dwg.draw.Text(x_sub1, y_top_bar - (37.0 * fator_esc), h_txt_sub, 0.0, sub1)
 
-            altura_tabela = h_cabecalho + len(sub_pilares) * h_linha
-            dwg.draw.Line(bx0, by0, bx0, by0 - altura_tabela)
-            dwg.draw.Line(bx0 + largura_col_pilar, by0, bx0 + largura_col_pilar, by0 - altura_tabela)
-            dwg.draw.Line(bx0 + largura_col_pilar + largura_col_coord, by0, bx0 + largura_col_pilar + largura_col_coord, by0 - altura_tabela)
-            dwg.draw.Line(bx0 + largura_bloco, by0, bx0 + largura_bloco, by0 - altura_tabela)
+        # Textos dos cabeçalhos das colunas da Tabela 1
+        col_x = x1_0
+        for c, col_nome in enumerate(["PILAR", "X (cm)", "PILAR", "Y (cm)"]):
+            cw = larguras_tab1[c]
+            if col_nome == "PILAR":
+                dwg.draw.Text(col_x + (15.0 * fator_esc), y_grid_topo - (24.0 * fator_esc), h_txt_cab, 0.0, col_nome)
+            else:
+                w_lbl = len(col_nome) * h_txt_cab
+                off_lbl = max(6.0 * fator_esc, (cw - w_lbl) / 2.0)
+                dwg.draw.Text(col_x + off_lbl, y_grid_topo - (24.0 * fator_esc), h_txt_cab, 0.0, col_nome)
+            col_x += cw
 
-            curr_y = by0 - h_cabecalho
-            for p in sub_pilares:
-                curr_y -= h_linha
-                dwg.draw.Line(bx0, curr_y, bx0 + largura_bloco, curr_y)
+        # Linhas verticais externas (toda a altura da tabela)
+        dwg.draw.Line(x1_0, y_top_bar, x1_0, y_fim)
+        dwg.draw.Line(x1_1, y_top_bar, x1_1, y_fim)
 
-                dwg.draw.Text(bx0 + 25.0, curr_y + 7.0, 14.0, 0.0, p.nome)
-                dwg.draw.Text(bx0 + largura_col_pilar + 30.0, curr_y + 7.0, 14.0, 0.0, f"{p.baricentro.x:.1f}")
-                dwg.draw.Text(bx0 + largura_col_pilar + largura_col_coord + 30.0, curr_y + 7.0, 14.0, 0.0, f"{p.baricentro.y:.1f}")
+        # Divisores internos de colunas (iniciam na linha de cabeçalho das grandezas)
+        col_x = x1_0
+        for cw in larguras_tab1[:-1]:
+            col_x += cw
+            dwg.draw.Line(col_x, y_grid_topo, col_x, y_fim)
 
-        y_fim = y_start - (h_cabecalho + linhas_por_coluna * h_linha)
+        # Dados da Tabela 1
+        curr_y = y_dados_topo
+        for i in range(n_total):
+            curr_y -= h_linha
+            dwg.draw.Line(x1_0, curr_y, x1_1, curr_y)
+
+            px = p_ord_x[i]
+            py = p_ord_y[i]
+            nome_px = str(px.nome)
+            val_x = f"{px.baricentro.x:.1f}" if px.baricentro else "0.0"
+            nome_py = str(py.nome)
+            val_y = f"{py.baricentro.y:.1f}" if py.baricentro else "0.0"
+
+            # Coluna 0: PILAR (ord X) - Alinhado à esquerda com margem +15.0 cm
+            c0_x = x1_0
+            dwg.draw.Text(c0_x + (15.0 * fator_esc), curr_y + (6.0 * fator_esc), h_txt_dados, 0.0, nome_px)
+
+            # Coluna 1: X (cm) - Centralizado na coluna
+            c1_x = c0_x + larguras_tab1[0]
+            off_x = max(6.0 * fator_esc, (larguras_tab1[1] - (len(val_x) * (8.5 * fator_esc))) / 2.0)
+            dwg.draw.Text(c1_x + off_x, curr_y + (6.0 * fator_esc), h_txt_dados, 0.0, val_x)
+
+            # Coluna 2: PILAR (ord Y) - Alinhado à esquerda com margem +15.0 cm
+            c2_x = c1_x + larguras_tab1[1]
+            dwg.draw.Text(c2_x + (15.0 * fator_esc), curr_y + (6.0 * fator_esc), h_txt_dados, 0.0, nome_py)
+
+            # Coluna 3: Y (cm) - Centralizado na coluna
+            c3_x = c2_x + larguras_tab1[2]
+            off_y = max(6.0 * fator_esc, (larguras_tab1[3] - (len(val_y) * (8.5 * fator_esc))) / 2.0)
+            dwg.draw.Text(c3_x + off_y, curr_y + (6.0 * fator_esc), h_txt_dados, 0.0, val_y)
+
+        # =====================================================================
+        # TABELA 2: ORDENADO POR PILARES
+        # =====================================================================
+        # Linhas horizontais do cabeçalho
+        dwg.draw.Line(x2_0, y_top_bar, x2_1, y_top_bar)
+        dwg.draw.Line(x2_0, y_grid_topo, x2_1, y_grid_topo)
+        dwg.draw.Line(x2_0, y_dados_topo, x2_1, y_dados_topo)
+
+        # Textos de título da Tabela 2 rigorosamente centralizados e contidos na caixa
+        tit2 = "BARICENTRO DE PILARES"
+        w_tit2 = len(tit2) * h_txt_tit  # 21 * 14.0 = 294.0 cm
+        x_tit2 = x2_0 + ((largura_tab2 - w_tit2) / 2.0)
+        dwg.draw.Text(x_tit2, y_top_bar - (20.0 * fator_esc), h_txt_tit, 0.0, tit2)
+
+        sub2 = "(ORDENADO POR PILARES)"
+        w_sub2 = len(sub2) * h_txt_sub  # 22 * 11.5 = 253.0 cm
+        x_sub2 = x2_0 + ((largura_tab2 - w_sub2) / 2.0)
+        dwg.draw.Text(x_sub2, y_top_bar - (37.0 * fator_esc), h_txt_sub, 0.0, sub2)
+
+        # Textos dos cabeçalhos das colunas da Tabela 2
+        col_x = x2_0
+        for c, col_nome in enumerate(["PILAR", "X (cm)", "Y (cm)"]):
+            cw = larguras_tab2[c]
+            if col_nome == "PILAR":
+                dwg.draw.Text(col_x + (15.0 * fator_esc), y_grid_topo - (24.0 * fator_esc), h_txt_cab, 0.0, col_nome)
+            else:
+                w_lbl = len(col_nome) * h_txt_cab
+                off_lbl = max(6.0 * fator_esc, (cw - w_lbl) / 2.0)
+                dwg.draw.Text(col_x + off_lbl, y_grid_topo - (24.0 * fator_esc), h_txt_cab, 0.0, col_nome)
+            col_x += cw
+
+        # Linhas verticais externas (toda a altura da tabela)
+        dwg.draw.Line(x2_0, y_top_bar, x2_0, y_fim)
+        dwg.draw.Line(x2_1, y_top_bar, x2_1, y_fim)
+
+        # Divisores internos de colunas (iniciam na linha de cabeçalho das grandezas)
+        col_x = x2_0
+        for cw in larguras_tab2[:-1]:
+            col_x += cw
+            dwg.draw.Line(col_x, y_grid_topo, col_x, y_fim)
+
+        # Dados da Tabela 2
+        curr_y = y_dados_topo
+        for i in range(n_total):
+            curr_y -= h_linha
+            dwg.draw.Line(x2_0, curr_y, x2_1, curr_y)
+
+            p = p_ord_nome[i]
+            nome_p = str(p.nome)
+            val_x = f"{p.baricentro.x:.1f}" if p.baricentro else "0.0"
+            val_y = f"{p.baricentro.y:.1f}" if p.baricentro else "0.0"
+
+            # Coluna 0: PILAR - Alinhado à esquerda com margem +15.0 cm
+            c0_x = x2_0
+            dwg.draw.Text(c0_x + (15.0 * fator_esc), curr_y + (6.0 * fator_esc), h_txt_dados, 0.0, nome_p)
+
+            # Coluna 1: X (cm) - Centralizado na coluna
+            c1_x = c0_x + larguras_tab2[0]
+            off_x = max(6.0 * fator_esc, (larguras_tab2[1] - (len(val_x) * (8.5 * fator_esc))) / 2.0)
+            dwg.draw.Text(c1_x + off_x, curr_y + (6.0 * fator_esc), h_txt_dados, 0.0, val_x)
+
+            # Coluna 2: Y (cm) - Centralizado na coluna
+            c2_x = c1_x + larguras_tab2[1]
+            off_y = max(6.0 * fator_esc, (larguras_tab2[2] - (len(val_y) * (8.5 * fator_esc))) / 2.0)
+            dwg.draw.Text(c2_x + off_y, curr_y + (6.0 * fator_esc), h_txt_dados, 0.0, val_y)
+
         return y_fim, largura_total
 
     def _desenhar_tabela_cargas(
@@ -477,6 +993,7 @@ class TQSDwgPlantaDeCargasBuilder:
         x_start: float,
         y_start: float,
         dados_porlid: Optional[Dict[str, Any]] = None,
+        escala: int = 50,
     ) -> Tuple[float, float]:
         """
         Desenha a tabela de cargas nas fundações idêntica ao relatório oficial do TQS (PORLID),
@@ -485,8 +1002,15 @@ class TQSDwgPlantaDeCargasBuilder:
           - Múltiplos casos (ex: Jardim Europa com 6 casos: FZ MAX, MX MAX, MY MAX, FZ MIN, MX MIN, MY MIN)
             desenhados lado a lado em blocos harmoniosos, exatamente como no GEO_CARGAS.DWG oficial.
           - Caso único (ex: Visconde do Herval 054), auto-dimensionado em 2 colunas para otimizar espaço.
+
+        Regra de altura de texto:
+          - Tamanho mínimo normativo no papel: 0.20 cm (2.0 mm), independente da escala.
+          - No desenho (espaço do modelo): h >= 0.20 * escala (10.0 cm para 1:50).
         Retorna (y_fim, largura_total).
         """
+        fator_esc = escala / 50.0
+        h_min_normativo = 0.20 * escala
+
         # -----------------------------------------------------------------
         # RAMIFICAÇÃO 1: MÚLTIPLOS CASOS DE CARGA (Conforme PORLID oficial)
         # -----------------------------------------------------------------
@@ -497,31 +1021,33 @@ class TQSDwgPlantaDeCargasBuilder:
             unidades = ["", "tf", "tf", "tf", "tfm", "tfm", "tfm"]
 
             # Cada bloco de caso tem 7 colunas (Pilar + 6 componentes de esforços)
-            larguras = [75.0, 75.0, 70.0, 70.0, 75.0, 75.0, 75.0]  # Total por bloco = 515.0 cm
+            larguras = [w * fator_esc for w in [75.0, 75.0, 70.0, 70.0, 75.0, 75.0, 75.0]]  # Total por bloco = 515.0 cm * fator_esc
             largura_bloco = sum(larguras)
-            espaco_entre_casos = 35.0
-            h_linha = 22.0
-            h_cabecalho = 38.0
+            espaco_entre_casos = 35.0 * fator_esc
+            h_linha = 22.0 * fator_esc
+            h_cabecalho = 38.0 * fator_esc
 
             largura_total = num_casos * largura_bloco + (num_casos - 1) * espaco_entre_casos
 
             # Título Geral da Tabela de Cargas
             y_titulo = y_start
             dwg.draw.level = 250
-            dwg.draw.Text(x_start + (largura_total / 2.0) - 200.0, y_titulo, 20.0, 0.0, "TABELA DE CARGAS NAS FUNDAÇÕES")
+            h_txt_tit = max(20.0 * fator_esc, h_min_normativo)
+            dwg.draw.Text(x_start + (largura_total / 2.0) - (200.0 * fator_esc), y_titulo, h_txt_tit, 0.0, "TABELA DE CARGAS NAS FUNDAÇÕES")
 
             # Subtítulo Geral
-            y_subtitulo = y_titulo - 26.0
+            y_subtitulo = y_titulo - (26.0 * fator_esc)
             dwg.draw.level = 0
+            h_txt_sub = max(13.5 * fator_esc, h_min_normativo)
             dwg.draw.Text(
-                x_start + max(10.0, (largura_total / 2.0) - 260.0),
+                x_start + max(10.0 * fator_esc, (largura_total / 2.0) - (260.0 * fator_esc)),
                 y_subtitulo,
-                13.5,
+                h_txt_sub,
                 0.0,
                 "TABELA DE ESFORÇOS CARACTERÍSTICOS POR CASO CRÍTICO (TQS ESPACIAL)",
             )
 
-            y_grid_topo = y_subtitulo - 30.0
+            y_grid_topo = y_subtitulo - (30.0 * fator_esc)
 
             max_linhas = 0
             for k, caso in enumerate(casos):
@@ -533,22 +1059,26 @@ class TQSDwgPlantaDeCargasBuilder:
                 # Nome do Caso (ex: 'CASO 1 - FZ MAX') acima da grade de cada bloco
                 dwg.draw.level = 222
                 nome_caso = caso.get("nome", f"CASO {k+1}")
-                dwg.draw.Text(bx0 + 10.0, by0 + 10.0, 14.0, 0.0, nome_caso)
+                h_txt_caso = max(14.0 * fator_esc, h_min_normativo)
+                dwg.draw.Text(bx0 + (10.0 * fator_esc), by0 + (10.0 * fator_esc), h_txt_caso, 0.0, nome_caso)
 
                 dwg.draw.level = 0
                 # Linha superior do cabeçalho
                 dwg.draw.Line(bx0, by0, bx0 + largura_bloco, by0)
                 # Linha intermediária (separa grandezas de unidades nas colunas de esforços)
-                dwg.draw.Line(bx0 + larguras[0], by0 - 20.0, bx0 + largura_bloco, by0 - 20.0)
+                dwg.draw.Line(bx0 + larguras[0], by0 - (20.0 * fator_esc), bx0 + largura_bloco, by0 - (20.0 * fator_esc))
                 # Linha inferior do cabeçalho
                 dwg.draw.Line(bx0, by0 - h_cabecalho, bx0 + largura_bloco, by0 - h_cabecalho)
 
-                # Textos do cabeçalho
-                dwg.draw.Text(bx0 + 15.0, by0 - 24.0, 12.5, 0.0, colunas[0])
+                # Textos do cabeçalho com altura mínima normativa de 0.20 cm no papel
+                h_txt_c0 = 0.20 * escala
+                h_txt_cab = 0.20 * escala
+                h_txt_un = 0.20 * escala
+                dwg.draw.Text(bx0 + (15.0 * fator_esc), by0 - (24.0 * fator_esc), h_txt_c0, 0.0, colunas[0])
                 ox = larguras[0]
                 for w, tit, un in zip(larguras[1:], colunas[1:], unidades[1:]):
-                    dwg.draw.Text(bx0 + ox + (w / 2.0) - 10.0, by0 - 15.0, 12.0, 0.0, tit)
-                    dwg.draw.Text(bx0 + ox + (w / 2.0) - 12.0, by0 - 32.0, 11.0, 0.0, un)
+                    dwg.draw.Text(bx0 + ox + (w / 2.0) - (10.0 * fator_esc), by0 - (15.0 * fator_esc), h_txt_cab, 0.0, tit)
+                    dwg.draw.Text(bx0 + ox + (w / 2.0) - (12.0 * fator_esc), by0 - (32.0 * fator_esc), h_txt_un, 0.0, un)
                     ox += w
 
                 # Linhas verticais do bloco
@@ -559,21 +1089,22 @@ class TQSDwgPlantaDeCargasBuilder:
                     cx += w
                     dwg.draw.Line(cx, by0, cx, by0 - altura_tabela)
 
-                # Linhas de dados de cada elemento
+                # Linhas de dados de cada elemento (nome de pilares e próprias cargas com h = 0.20 * escala)
                 curr_y = by0 - h_cabecalho
+                h_txt_dados = 0.20 * escala
                 for row in linhas_caso:
                     curr_y -= h_linha
                     dwg.draw.Line(bx0, curr_y, bx0 + largura_bloco, curr_y)
 
                     # Coluna Pilar / Elem
-                    dwg.draw.Text(bx0 + 15.0, curr_y + 6.0, 12.0, 0.0, str(row[0]))
+                    dwg.draw.Text(bx0 + (15.0 * fator_esc), curr_y + (6.0 * fator_esc), h_txt_dados, 0.0, str(row[0]))
 
                     # Colunas de Esforços Fz, Fx, Fy, Mx, My, Mz
                     ox = larguras[0]
                     for w, val in zip(larguras[1:], row[1:]):
                         val_str = str(val).strip()
-                        text_offset = max(8.0, (w / 2.0) - (len(val_str) * 3.5))
-                        dwg.draw.Text(bx0 + ox + text_offset, curr_y + 6.0, 12.0, 0.0, val_str)
+                        text_offset = max(8.0 * fator_esc, (w / 2.0) - (len(val_str) * (3.5 * fator_esc)))
+                        dwg.draw.Text(bx0 + ox + text_offset, curr_y + (6.0 * fator_esc), h_txt_dados, 0.0, val_str)
                         ox += w
 
             y_fim = y_grid_topo - (h_cabecalho + max_linhas * h_linha)
@@ -608,27 +1139,28 @@ class TQSDwgPlantaDeCargasBuilder:
         num_colunas = max(1, math.ceil(n_total / 30))
         linhas_por_coluna = math.ceil(n_total / num_colunas)
 
-        larguras = [85.0, 85.0, 80.0, 80.0, 85.0, 85.0, 85.0]  # Total por bloco = 585.0 cm
+        larguras = [w * fator_esc for w in [85.0, 85.0, 80.0, 80.0, 85.0, 85.0, 85.0]]  # Total por bloco = 585.0 cm * fator_esc
         largura_bloco = sum(larguras)
-        espaco_entre_blocos = 50.0
-        h_linha = 22.0
-        h_cabecalho = 38.0
+        espaco_entre_blocos = 50.0 * fator_esc
+        h_linha = 22.0 * fator_esc
+        h_cabecalho = 38.0 * fator_esc
 
         largura_total = num_colunas * largura_bloco + (num_colunas - 1) * espaco_entre_blocos
 
         # Título Geral da Tabela de Cargas (com espaçamento seguro abaixo da tabela superior)
         y_titulo = y_start
         dwg.draw.level = 250
-        dwg.draw.Text(x_start + (largura_total / 2.0) - 200.0, y_titulo, 18.0, 0.0, "TABELA DE CARGAS NAS FUNDAÇÕES")
+        h_txt_tit2 = max(18.0 * fator_esc, h_min_normativo)
+        dwg.draw.Text(x_start + (largura_total / 2.0) - (200.0 * fator_esc), y_titulo, h_txt_tit2, 0.0, "TABELA DE CARGAS NAS FUNDAÇÕES")
 
         # Subtítulo (Combinação crítica oficial do TQS)
-        y_subtitulo = y_titulo - 28.0
+        y_subtitulo = y_titulo - (28.0 * fator_esc)
         dwg.draw.level = 0
-        tam_fonte_sub = 13.0 if len(titulo_comb) > 40 else 15.0
-        dwg.draw.Text(x_start + max(10.0, (largura_total / 2.0) - (len(titulo_comb) * 3.8)), y_subtitulo, tam_fonte_sub, 0.0, titulo_comb)
+        tam_fonte_sub = max((13.0 if len(titulo_comb) > 40 else 15.0) * fator_esc, h_min_normativo)
+        dwg.draw.Text(x_start + max(10.0 * fator_esc, (largura_total / 2.0) - (len(titulo_comb) * (3.8 * fator_esc))), y_subtitulo, tam_fonte_sub, 0.0, titulo_comb)
 
         # O grid da tabela inicia abaixo do subtítulo
-        y_grid_topo = y_subtitulo - 30.0
+        y_grid_topo = y_subtitulo - (30.0 * fator_esc)
 
         for col_idx in range(num_colunas):
             sub_linhas = linhas[col_idx * linhas_por_coluna : (col_idx + 1) * linhas_por_coluna]
@@ -642,16 +1174,19 @@ class TQSDwgPlantaDeCargasBuilder:
             # Linha superior do cabeçalho
             dwg.draw.Line(bx0, by0, bx0 + largura_bloco, by0)
             # Linha intermediária (separa grandezas de unidades nas colunas de esforços)
-            dwg.draw.Line(bx0 + larguras[0], by0 - 20.0, bx0 + largura_bloco, by0 - 20.0)
+            dwg.draw.Line(bx0 + larguras[0], by0 - (20.0 * fator_esc), bx0 + largura_bloco, by0 - (20.0 * fator_esc))
             # Linha inferior do cabeçalho
             dwg.draw.Line(bx0, by0 - h_cabecalho, bx0 + largura_bloco, by0 - h_cabecalho)
 
-            # Textos do cabeçalho
-            dwg.draw.Text(bx0 + 20.0, by0 - 24.0, 13.0, 0.0, colunas[0])
+            # Textos do cabeçalho com altura mínima normativa de 0.20 cm no papel
+            h_txt_c0 = 0.20 * escala
+            h_txt_cab = 0.20 * escala
+            h_txt_un = 0.20 * escala
+            dwg.draw.Text(bx0 + (20.0 * fator_esc), by0 - (24.0 * fator_esc), h_txt_c0, 0.0, colunas[0])
             ox = larguras[0]
             for w, tit, un in zip(larguras[1:], colunas[1:], unidades[1:]):
-                dwg.draw.Text(bx0 + ox + (w / 2.0) - 10.0, by0 - 15.0, 12.5, 0.0, tit)
-                dwg.draw.Text(bx0 + ox + (w / 2.0) - 12.0, by0 - 32.0, 11.5, 0.0, un)
+                dwg.draw.Text(bx0 + ox + (w / 2.0) - (10.0 * fator_esc), by0 - (15.0 * fator_esc), h_txt_cab, 0.0, tit)
+                dwg.draw.Text(bx0 + ox + (w / 2.0) - (12.0 * fator_esc), by0 - (32.0 * fator_esc), h_txt_un, 0.0, un)
                 ox += w
 
             # Linhas verticais do bloco
@@ -662,21 +1197,22 @@ class TQSDwgPlantaDeCargasBuilder:
                 cx += w
                 dwg.draw.Line(cx, by0, cx, by0 - altura_tabela)
 
-            # Linhas de dados
+            # Linhas de dados (nome de pilares e próprias cargas com h = 0.20 * escala)
             curr_y = by0 - h_cabecalho
+            h_txt_dados = 0.20 * escala
             for row in sub_linhas:
                 curr_y -= h_linha
                 dwg.draw.Line(bx0, curr_y, bx0 + largura_bloco, curr_y)
 
                 # Coluna Elem
-                dwg.draw.Text(bx0 + 15.0, curr_y + 6.0, 12.5, 0.0, str(row[0]))
+                dwg.draw.Text(bx0 + (15.0 * fator_esc), curr_y + (6.0 * fator_esc), h_txt_dados, 0.0, str(row[0]))
 
                 # Colunas de Esforços Fz, Fx, Fy, Mx, My, Mz
                 ox = larguras[0]
                 for w, val in zip(larguras[1:], row[1:]):
                     val_str = str(val).strip()
-                    text_offset = max(10.0, (w / 2.0) - (len(val_str) * 3.5))
-                    dwg.draw.Text(bx0 + ox + text_offset, curr_y + 6.0, 12.5, 0.0, val_str)
+                    text_offset = max(10.0 * fator_esc, (w / 2.0) - (len(val_str) * (3.5 * fator_esc)))
+                    dwg.draw.Text(bx0 + ox + text_offset, curr_y + (6.0 * fator_esc), h_txt_dados, 0.0, val_str)
                     ox += w
 
         y_fim = y_grid_topo - (h_cabecalho + linhas_por_coluna * h_linha)
@@ -688,34 +1224,45 @@ class TQSDwgPlantaDeCargasBuilder:
         x_start: float,
         y_start: float,
         dados_porlid: Optional[Dict[str, Any]] = None,
+        escala: int = 50,
     ) -> float:
         """
         Desenha os 3 blocos informativos rigorosamente iguais ao modelo GEO_CARGAS do Zuckhan Soledade:
           1. OBSERVAÇÕES (variável conforme os casos críticos de carregamento do edifício)
           2. CONVENÇÃO DE SINAIS (esquema isométrico 3D com eixos e esforços)
           3. INCIDÊNCIA DAS CARGAS DE VENTO (retângulo do edifício com setas direcionais a 0°, 90°, 180°, 270°)
+          4. CONVENÇÕES (Simbologia dos Pilares, Contenções, Ponto de Carga e Origem 0,0)
         Retorna o Y mínimo (inferior) ocupado pelos blocos.
+
+        Regra de altura de texto:
+          - Tamanho mínimo normativo no papel: >= 0.20 cm (2.0 mm), independente da escala.
+          - No desenho (espaço do modelo): h >= 0.20 * escala (10.0 cm para 1:50, 15.0 cm para 1:75).
         """
+        fator_esc = escala / 50.0
+        h_min_normativo = 0.20 * escala
+
         # =========================================================================
         # BLOCO 1: OBSERVAÇÕES (Alinhado à esquerda: x_start, y_start)
         # =========================================================================
         dwg.draw.level = 250
-        dwg.draw.Text(x_start, y_start, 20.0, 0.0, "OBSERVAÇÕES:")
-        dwg.draw.Line(x_start, y_start - 11.26, x_start + 218.66, y_start - 11.26)
+        h_tit = max(20.0 * fator_esc, h_min_normativo)
+        dwg.draw.Text(x_start, y_start, h_tit, 0.0, "OBSERVAÇÕES:")
+        dwg.draw.Line(x_start, y_start - (11.26 * fator_esc), x_start + (218.66 * fator_esc), y_start - (11.26 * fator_esc))
 
-        curr_y = y_start - 56.27
-        dy_linha = 25.01
+        curr_y = y_start - (56.27 * fator_esc)
+        dy_linha = 25.01 * fator_esc
+        h_txt = max(15.0 * fator_esc, h_min_normativo)
 
         # Linhas de cabeçalho fixas
         dwg.draw.level = 250
-        dwg.draw.Text(x_start, curr_y, 15.0, 0.0, "- Esforços com valores característicos.")
+        dwg.draw.Text(x_start, curr_y, h_txt, 0.0, "- Esforços com valores característicos.")
         curr_y -= dy_linha
 
         dwg.draw.level = 0
         dwg.draw.Text(
             x_start,
             curr_y,
-            15.0,
+            h_txt,
             0.0,
             "- Forças em tonelada-força (tf) e momentos fletores em tonelada-força metro (tf.m).",
         )
@@ -746,13 +1293,13 @@ class TQSDwgPlantaDeCargasBuilder:
                     desc = f"combinação dos carregamentos: {c.get('titulo') or c.get('nome')}"
 
                 dwg.draw.level = 0
-                dwg.draw.Text(x_start, curr_y, 15.0, 0.0, f"- Caso {cid}: {desc}")
+                dwg.draw.Text(x_start, curr_y, h_txt, 0.0, f"- Caso {cid}: {desc}")
                 curr_y -= dy_linha
 
                 dwg.draw.Text(
                     x_start,
                     curr_y,
-                    15.0,
+                    h_txt,
                     0.0,
                     "   (incluindo a ação do vento e empuxo do solo, se houver).",
                 )
@@ -763,7 +1310,7 @@ class TQSDwgPlantaDeCargasBuilder:
             dwg.draw.Text(
                 x_start,
                 curr_y,
-                15.0,
+                h_txt,
                 0.0,
                 "- Caso 1: combinação dos carregamentos que produz a máxima força vertical Fz em cada pilar",
             )
@@ -771,7 +1318,7 @@ class TQSDwgPlantaDeCargasBuilder:
             dwg.draw.Text(
                 x_start,
                 curr_y,
-                15.0,
+                h_txt,
                 0.0,
                 "   (incluindo a ação do vento e empuxo do solo, se houver).",
             )
@@ -782,19 +1329,19 @@ class TQSDwgPlantaDeCargasBuilder:
         dwg.draw.Text(
             x_start,
             curr_y,
-            15.0,
+            h_txt,
             0.0,
             "- A escolha da combinação de carregamentos para elaboração do projeto de fundações é de inteira responsabilidade do",
         )
         curr_y -= dy_linha
-        dwg.draw.Text(x_start, curr_y, 15.0, 0.0, "   projetista de fundações.")
+        dwg.draw.Text(x_start, curr_y, h_txt, 0.0, "   projetista de fundações.")
         curr_y -= dy_linha
 
         dwg.draw.level = 250
         dwg.draw.Text(
             x_start,
             curr_y,
-            15.0,
+            h_txt,
             0.0,
             "- As cargas distribuídas nas estruturas de contenção, quando existirem, compreendem as reações dos pavimentos nessas",
         )
@@ -802,7 +1349,7 @@ class TQSDwgPlantaDeCargasBuilder:
         dwg.draw.Text(
             x_start,
             curr_y,
-            15.0,
+            h_txt,
             0.0,
             "   estruturas. Não está incluído o peso próprio das mesmas.",
         )
@@ -811,7 +1358,7 @@ class TQSDwgPlantaDeCargasBuilder:
         y_fim_obs = curr_y
 
         # =========================================================================
-        # CARREGAMENTO DOS BLOCOS 2 E 3 (GEO_CARGAS do Zuckhan Soledade)
+        # CARREGAMENTO DOS BLOCOS 2, 3 E 4 (GEO_CARGAS do Zuckhan Soledade)
         # =========================================================================
         caminho_blocos = os.path.join(os.path.dirname(__file__), "blocos_informativos_soledade.json")
         if os.path.exists(caminho_blocos):
@@ -819,23 +1366,24 @@ class TQSDwgPlantaDeCargasBuilder:
                 blocos_data = json.load(f)
 
             # BLOCO 2: CONVENÇÃO DE SINAIS (ΔX = +1436.25 cm, ΔY = 0.00 cm)
-            x_conv = x_start + 1436.25
+            x_conv = x_start + (1436.25 * fator_esc)
             y_conv = y_start
             for e in blocos_data.get("convencao", []):
                 etype = e.get("type")
                 dwg.draw.level = e.get("level", 0)
                 if etype == "line":
                     dwg.draw.Line(
-                        x_conv + e["dx1"],
-                        y_conv + e["dy1"],
-                        x_conv + e["dx2"],
-                        y_conv + e["dy2"],
+                        x_conv + (e["dx1"] * fator_esc),
+                        y_conv + (e["dy1"] * fator_esc),
+                        x_conv + (e["dx2"] * fator_esc),
+                        y_conv + (e["dy2"] * fator_esc),
                     )
                 elif etype == "text":
+                    h_txt_elem = max(e["height"] * fator_esc, h_min_normativo)
                     dwg.draw.Text(
-                        x_conv + e["dx"],
-                        y_conv + e["dy"],
-                        e["height"],
+                        x_conv + (e["dx"] * fator_esc),
+                        y_conv + (e["dy"] * fator_esc),
+                        h_txt_elem,
                         e.get("angle", 0.0),
                         e["text"],
                     )
@@ -844,27 +1392,28 @@ class TQSDwgPlantaDeCargasBuilder:
                     if len(pts) >= 2:
                         dwg.draw.PolyStart()
                         for pt in pts:
-                            dwg.draw.PolyEnterPoint(x_conv + pt[0], y_conv + pt[1])
+                            dwg.draw.PolyEnterPoint(x_conv + (pt[0] * fator_esc), y_conv + (pt[1] * fator_esc))
                         dwg.draw.Polyline()
 
             # BLOCO 3: INCIDÊNCIA DAS CARGAS DE VENTO (ΔX = +2178.19 cm, ΔY = +1.68 cm)
-            x_vento = x_start + 2178.19
-            y_vento = y_start + 1.68
+            x_vento = x_start + (2178.19 * fator_esc)
+            y_vento = y_start + (1.68 * fator_esc)
             for e in blocos_data.get("vento", []):
                 etype = e.get("type")
                 dwg.draw.level = e.get("level", 0)
                 if etype == "line":
                     dwg.draw.Line(
-                        x_vento + e["dx1"],
-                        y_vento + e["dy1"],
-                        x_vento + e["dx2"],
-                        y_vento + e["dy2"],
+                        x_vento + (e["dx1"] * fator_esc),
+                        y_vento + (e["dy1"] * fator_esc),
+                        x_vento + (e["dx2"] * fator_esc),
+                        y_vento + (e["dy2"] * fator_esc),
                     )
                 elif etype == "text":
+                    h_txt_elem = max(e["height"] * fator_esc, h_min_normativo)
                     dwg.draw.Text(
-                        x_vento + e["dx"],
-                        y_vento + e["dy"],
-                        e["height"],
+                        x_vento + (e["dx"] * fator_esc),
+                        y_vento + (e["dy"] * fator_esc),
+                        h_txt_elem,
                         e.get("angle", 0.0),
                         e["text"],
                     )
@@ -873,12 +1422,11 @@ class TQSDwgPlantaDeCargasBuilder:
                     if len(pts) >= 2:
                         dwg.draw.PolyStart()
                         for pt in pts:
-                            dwg.draw.PolyEnterPoint(x_vento + pt[0], y_vento + pt[1])
+                            dwg.draw.PolyEnterPoint(x_vento + (pt[0] * fator_esc), y_vento + (pt[1] * fator_esc))
                         dwg.draw.Polyline()
 
             # BLOCO 4: CONVENÇÕES (Simbologia dos Pilares, Contenções, Ponto de Carga e Origem 0,0)
-            # Posicionado abaixo das Observações e Convenção de Sinais
-            y_conv_loc = min(y_fim_obs, y_start - 560.0) - 70.0
+            y_conv_loc = min(y_fim_obs, y_start - (560.0 * fator_esc)) - (70.0 * fator_esc)
             x_conv_loc = x_start
             for e in blocos_data.get("convencoes_locacao", []):
                 etype = e.get("type")
@@ -887,16 +1435,17 @@ class TQSDwgPlantaDeCargasBuilder:
                     dwg.draw.color = e["color"]
                 if etype == "line":
                     dwg.draw.Line(
-                        x_conv_loc + e["dx1"],
-                        y_conv_loc + e["dy1"],
-                        x_conv_loc + e["dx2"],
-                        y_conv_loc + e["dy2"],
+                        x_conv_loc + (e["dx1"] * fator_esc),
+                        y_conv_loc + (e["dy1"] * fator_esc),
+                        x_conv_loc + (e["dx2"] * fator_esc),
+                        y_conv_loc + (e["dy2"] * fator_esc),
                     )
                 elif etype == "text":
+                    h_txt_elem = max(e["height"] * fator_esc, h_min_normativo)
                     dwg.draw.Text(
-                        x_conv_loc + e["dx"],
-                        y_conv_loc + e["dy"],
-                        e["height"],
+                        x_conv_loc + (e["dx"] * fator_esc),
+                        y_conv_loc + (e["dy"] * fator_esc),
+                        h_txt_elem,
                         e.get("angle", 0.0),
                         e["text"],
                     )
@@ -905,29 +1454,28 @@ class TQSDwgPlantaDeCargasBuilder:
                     if len(pts) >= 2:
                         dwg.draw.PolyStart()
                         for pt in pts:
-                            dwg.draw.PolyEnterPoint(x_conv_loc + pt[0], y_conv_loc + pt[1])
+                            dwg.draw.PolyEnterPoint(x_conv_loc + (pt[0] * fator_esc), y_conv_loc + (pt[1] * fator_esc))
                         dwg.draw.Polyline()
                 elif etype == "circle":
                     dwg.draw.Circle(
-                        x_conv_loc + e["dxc"],
-                        y_conv_loc + e["dyc"],
-                        e["radius"],
+                        x_conv_loc + (e["dxc"] * fator_esc),
+                        y_conv_loc + (e["dyc"] * fator_esc),
+                        e["radius"] * fator_esc,
                     )
 
             # Restaura cor padrão ByLevel
             dwg.draw.color = 0
-            y_fim = y_conv_loc - 495.0
+            y_fim = y_conv_loc - (495.0 * fator_esc)
             return y_fim
 
-        # O Y inferior ocupado é o menor entre as observações e a convenção de sinais (-555 cm)
-        y_fim = min(y_fim_obs, y_start - 560.0)
+        y_fim = min(y_fim_obs, y_start - (560.0 * fator_esc))
         return y_fim
 
     def _auto_selecionar_e_desenhar_moldura(
         self,
         dwg: TQSDwg.Dwg,
         bounds_conteudo: Tuple[float, float, float, float],
-        escala_inicial: int = 50,
+        escala: int = 50,
         planta: Optional[PlantaDeCargasModel] = None,
     ) -> Tuple[str, int]:
         r"""
@@ -940,35 +1488,29 @@ class TQSDwgPlantaDeCargasBuilder:
         larg_desenho = max_x - min_x
         alt_desenho = max_y - min_y
 
-        escala = escala_inicial
         formato_selecionado = None
         dim_papel = None
 
-        # Testa as escalas 1:50, 1:75 ou 1:100 caso o edifício seja colossal
-        for esc in [escala_inicial, 75, 100]:
-            # Margem esquerda ABNT: 2.5 cm no papel | Demais margens: 1.0 cm
-            folga_larg = (2.5 + 1.0 + 4.0) * esc # Margens + folga de respiro
-            folga_alt = (1.0 + 1.0 + 4.0) * esc
+        # Margem esquerda ABNT: 2.5 cm no papel | Demais margens: 1.0 cm
+        folga_larg = (2.5 + 1.0 + 4.0) * escala # Margens + folga de respiro
+        folga_alt = (1.0 + 1.0 + 4.0) * escala
 
-            larg_min_papel = (larg_desenho + folga_larg) / esc
-            alt_min_papel = (alt_desenho + folga_alt) / esc
+        larg_min_papel = (larg_desenho + folga_larg) / escala
+        alt_min_papel = (alt_desenho + folga_alt) / escala
 
-            # Encontra todas as molduras catalogadas oficiais que atendem
-            candidatos = []
-            for nome, wp, hp in CATALOGO_MOLDURAS_TQS:
-                if wp >= larg_min_papel and hp >= alt_min_papel:
-                    candidatos.append((nome, wp, hp, wp * hp))
+        # Encontra todas as molduras catalogadas oficiais que atendem na escala fixada
+        candidatos = []
+        for nome, wp, hp in CATALOGO_MOLDURAS_TQS:
+            if wp >= larg_min_papel and hp >= alt_min_papel:
+                candidatos.append((nome, wp, hp, wp * hp))
 
-            if candidatos:
-                # Escolhe a menor folha oficial por consumo de papel (área mínima)
-                candidatos.sort(key=lambda c: c[3])
-                formato_selecionado = candidatos[0][0]
-                dim_papel = (candidatos[0][1], candidatos[0][2])
-                escala = esc
-                break
-
-        # Fallback de segurança estritamente para o maior formato padrão oficial do TQS (180-85)
-        if not formato_selecionado:
+        if candidatos:
+            # Escolhe a menor folha oficial por consumo de papel (área mínima)
+            candidatos.sort(key=lambda c: c[3])
+            formato_selecionado = candidatos[0][0]
+            dim_papel = (candidatos[0][1], candidatos[0][2])
+        else:
+            # Fallback de segurança estritamente para o maior formato padrão oficial do TQS (180-85)
             formato_selecionado = "180-85"
             dim_papel = (180.0, 84.1)
 
@@ -989,93 +1531,69 @@ class TQSDwgPlantaDeCargasBuilder:
         x1 = x0 + w_proj
         y1 = y0 + h_proj
 
-        # Carrega e insere a moldura oficial do TQS diretamente da pasta SUPORTE/NGE/MOLDURAS
-        from src.tqs_adapter.tqs_env import PASTA_SUPORTE
-        pasta_molduras = os.path.join(PASTA_SUPORTE, "NGE", "MOLDURAS") if PASTA_SUPORTE else ""
-        if not os.path.exists(pasta_molduras):
-            for drive in ["C", "D", "E", "F"]:
-                cand_mold = fr"{drive}:\TQSW\SUPORTE\NGE\MOLDURAS"
-                if os.path.exists(cand_mold):
-                    pasta_molduras = cand_mold
-                    break
-        caminho_moldura = os.path.join(pasta_molduras, f"{formato_selecionado}.DWG") if pasta_molduras else ""
-        bloco_inserido = False
+        # Margens ABNT / TQS
+        mx0 = 2.5 * escala
+        my0 = 1.0 * escala
+        mx1 = w_proj - (1.0 * escala)
+        my1 = h_proj - (1.0 * escala)
 
-        if os.path.exists(caminho_moldura):
-            try:
-                dwg.draw.BlockLoadFromDwg(caminho_moldura)
-                dwg.draw.BlockInsert(formato_selecionado, x0, y0, float(escala), float(escala), 0.0)
-                bloco_inserido = True
-            except Exception:
-                bloco_inserido = False
+        # Área reservada para o selo no canto inferior direito (apenas demarcação, sem detalhes de carimbo)
+        larg_selo = 17.5 * escala
+        alt_selo = 14.85 * escala  # Módulo A4 meio (14.85 cm)
+        sx0 = mx1 - larg_selo
+        sy1 = my0 + alt_selo
 
-        if not bloco_inserido:
-            # Fallback gráfico caso a pasta de suporte do TQS não esteja disponível
-            dwg.draw.level = 18
-            dwg.draw.Line(x0, y0, x1, y0)
-            dwg.draw.Line(x1, y0, x1, y1)
-            dwg.draw.Line(x1, y1, x0, y1)
-            dwg.draw.Line(x0, y1, x0, y0)
+        # Criação do Bloco de Projeção da Moldura (Nível 100, Cor 37 - Padrão TQS não plotável)
+        dwg.draw.level = 100
+        dwg.draw.color = 37
 
-            # Margem interna útil ABNT / TQS
-            mx0 = x0 + 2.5 * escala
-            my0 = y0 + 1.0 * escala
-            mx1 = x1 - 1.0 * escala
-            my1 = y1 - 1.0 * escala
+        dwg.draw.BlockOpen(formato_selecionado, 0.0, 0.0)
+        dwg.draw.level = 100
+        dwg.draw.color = 37
 
-            dwg.draw.level = 32
-            dwg.draw.Line(mx0, my0, mx1, my0)
-            dwg.draw.Line(mx1, my0, mx1, my1)
-            dwg.draw.Line(mx1, my1, mx0, my1)
-            dwg.draw.Line(mx0, my1, mx0, my0)
+        # 1. Borda externa do papel
+        dwg.draw.Line(0.0, 0.0, w_proj, 0.0)
+        dwg.draw.Line(w_proj, 0.0, w_proj, h_proj)
+        dwg.draw.Line(0.0, 0.0, 0.0, h_proj)
+        dwg.draw.Line(0.0, h_proj, w_proj, h_proj)
 
-            # Área reservada para o Selo / Carimbo TQS no canto inferior direito
-            larg_selo = 17.5 * escala
-            alt_selo = 15.0 * escala
-            sx0 = mx1 - larg_selo
-            sy0 = my0
-            sx1 = mx1
-            sy1 = my0 + alt_selo
+        # 2. Margem interna útil
+        dwg.draw.Line(mx0, my0, mx1, my0)
+        dwg.draw.Line(mx1, my0, mx1, my1)
+        dwg.draw.Line(mx0, my1, mx1, my1)
+        dwg.draw.Line(mx0, my1, mx0, my0)
 
-            dwg.draw.level = 0
-            dwg.draw.Line(sx0, sy0, sx0, sy1)
-            dwg.draw.Line(sx0, sy1, sx1, sy1)
+        # 3. Retângulo delimitador da área do selo (sem linhas internas de carimbo nem textos)
+        dwg.draw.Line(sx0, 0.0, sx0, sy1)
+        dwg.draw.Line(mx1, sy1, sx0, sy1)
 
-            dwg.draw.Text(sx0 + 40.0, sy1 - 50.0, 18.0, 0.0, "ÁREA RESERVADA PARA O SELO / CARIMBO TQS")
-            dwg.draw.Text(sx0 + 40.0, sy1 - 85.0, 14.0, 0.0, f"MOLDURA OFICIAL TQS: {formato_selecionado} ({wp:.1f} x {hp:.1f} cm)")
-            dwg.draw.Text(sx0 + 40.0, sy1 - 115.0, 14.0, 0.0, f"ESCALA 1:{escala} | RESERVADO PARA MONTAGEM DE PRANCHAS")
+        # 4. Marcas de dobra (módulos de 18.5 cm na horizontal e 14.85 cm na vertical)
+        mod_x = 18.5 * escala
+        x_tick = sx0 - mod_x
+        while x_tick > mx0:
+            dwg.draw.Line(x_tick, 0.0, x_tick, my0)
+            dwg.draw.Line(x_tick, my1, x_tick, h_proj)
+            x_tick -= mod_x
 
-            # Marcas de centro / dobra da folha
-            cx = (x0 + x1) / 2.0
-            cy = (y0 + y1) / 2.0
-            dwg.draw.Line(cx, y1 - 25.0, cx, y1 + 25.0)
-            dwg.draw.Line(cx, y0 - 25.0, cx, y0 + 25.0)
-            dwg.draw.Line(x0 - 25.0, cy, x0 + 25.0, cy)
-            dwg.draw.Line(x1 - 25.0, cy, x1 + 25.0, cy)
+        mod_y = 14.85 * escala
+        y_tick = mod_y
+        while y_tick < my1:
+            dwg.draw.Line(0.0, y_tick, mx0, y_tick)
+            dwg.draw.Line(mx1, y_tick, w_proj, y_tick)
+            y_tick += mod_y
 
-        # Informações complementares de identificação no carimbo oficial TQS
-        fator_esc = escala / 50.0
-        sx_carimbo = x0 + (wp - 18.2) * escala
-        sy_carimbo = y0 + 1.0 * escala
-        nome_obra = planta.edificio_nome if planta else "PROJETO ESTRUTURAL"
+        # 5. Nome do formato em texto simples na margem esquerda
+        dwg.draw.Text(mx0 - 0.4 * escala, my0 + 6.0 * escala, 1.8 * escala, 90.0, formato_selecionado)
 
-        dwg.draw.level = 18
-        # Título da prancha sobre o selo
-        dwg.draw.Text(sx_carimbo + 30.0 * fator_esc, sy_carimbo + 5.2 * escala, 12.0 * fator_esc, 0.0, "PLANTA DE CARGAS E LOCAÇÃO")
-        dwg.draw.Text(sx_carimbo + 30.0 * fator_esc, sy_carimbo + 4.4 * escala, 10.0 * fator_esc, 0.0, "FUNDAÇÕES")
-        # Escala da prancha
-        dwg.draw.Text(sx_carimbo + 137.0 * fator_esc, sy_carimbo + 1.1 * escala, 11.0 * fator_esc, 0.0, f"1:{escala}")
+        dwg.draw.BlockClose()
 
-        # Título identificador no topo da folha
+        # Inserção do bloco no ponto (x0, y0) da prancha no Nível 100
+        dwg.draw.level = 100
+        dwg.draw.color = 37
+        dwg.draw.BlockInsert(formato_selecionado, x0, y0, 1.0, 1.0, 0.0)
+
+        # Restaura níveis e cores normais
+        dwg.draw.color = 0
         dwg.draw.level = 0
-        mx0_proj = x0 + 2.5 * escala
-        my1_proj = y1 - 1.0 * escala
-        dwg.draw.Text(
-            mx0_proj + 40.0,
-            my1_proj + 15.0,
-            16.0,
-            0.0,
-            f"MOLDURA PADRÃO TQS: FORMATO {formato_selecionado} ({int(wp*10)} x {int(hp*10)} mm)  |  ESCALA 1:{escala}",
-        )
 
         return formato_selecionado, escala
