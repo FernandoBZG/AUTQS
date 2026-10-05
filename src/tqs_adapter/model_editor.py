@@ -330,6 +330,15 @@ class TQSModelEditor:
         pilares.sort(key=lambda x: x["numero"])
         return pilares
 
+    def obter_pilar(self, pavimento: str, identificador_pilar: Any) -> Optional[Dict[str, Any]]:
+        """Busca os dados de um pilar específico pelo nome ('P1', 'P4') ou número."""
+        pilares = self.listar_pilares(pavimento)
+        alvo_norm = normalizar_texto(str(identificador_pilar)).lstrip("P")
+        for p in pilares:
+            if str(p["numero"]) == alvo_norm or normalizar_texto(p["nome"]).lstrip("P") == alvo_norm:
+                return p
+        return None
+
     def listar_cargas(self, pavimento: str) -> Dict[str, List[Dict[str, Any]]]:
         """Lista todas as cargas por área, lineares e adicionais cadastradas no pavimento."""
         fl, nome_real = self._obter_objeto_pavimento(pavimento)
@@ -553,7 +562,7 @@ class TQSModelEditor:
         if h_cm is not None:
             geo.sectionH1 = float(h_cm)
 
-        pilar_encontrado.ColumnSectionUpdateGeometry(0)
+        pilar_encontrado.ColumnSectionUpdateGeometry(sec)
         self.salvar()
 
         depois = {

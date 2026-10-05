@@ -18,6 +18,7 @@ class AutqsChatAgent:
         self.gemini_client = GeminiClient(api_key=api_key)
         self.edificio_ativo: Optional[str] = "054"
         self.ultima_planta: Optional[Any] = None
+        self.modificacao_pendente: Optional[Dict[str, Any]] = None
 
     def set_api_key(self, api_key: str):
         self.gemini_client = GeminiClient(api_key=api_key)
@@ -53,28 +54,15 @@ class AutqsChatAgent:
         from src.tqs_adapter.model_editor import normalizar_texto
         msg_norm = normalizar_texto(msg)
 
-        # 2. Pergunta sobre edifícios disponíveis
-        if any(k in msg_norm for k in ["QUAI", "LIST", "MOSTR", "EXIB"]) and any(k in msg_norm for k in ["EDIF", "PROJET", "OBRA"]) and not any(k in msg_norm for k in ["PAVIMENT", "PISO", "VIGA", "LAJE", "PILAR", "CARGA"]):
-            edificios = TQSBuildingReader.listar_edificios_disponiveis()
-            linhas = ["### 🏢 Edifícios Detectados no Sistema TQS:\n"]
-            for e in edificios:
-                status = "✅ **Pronto para Emissão (Pórtico OK)**" if e["processado"] else "⚠️ *Requer Processamento no TQS*"
-                linhas.append(f"- **{e['nome']}**\n  - Status: {status}\n  - Pasta: `{e['caminho']}`")
-            
-            linhas.append("\n*Para operar um edifício, digite por exemplo:* `Mudar para edifício 054` ou `Gere a planta de cargas`")
-            return {
-                "tipo": "listagem_edificios",
-                "texto": "\n".join(linhas),
-                "dados": edificios,
-            }
+        # Resposta a solicitação de aprovação pendente no chat
+        if self.modificacao_pendente:
+            eh_afirmacao = any(msg_norm == k for k in ["SIM", "S", "CONFIRMO", "CONFIRMAR", "APROVAR", "APROVADO", "YES", "Y", "OK", "CLARO", "AUTORIZO", "AUTORIZADO", "PODE"])
+            eh_negacao = any(msg_norm == k for k in ["NAO", "N", "CANCELA", "CANCELAR", "REJEITAR", "NO", "NUNCA", "DEIXA"])
 
-        # 3. EDIÇÃO NO MODELADOR ESTRUTURAL (Vigas, Lajes, Pilares)
-        eh_mutacao = any(k in msg_norm for k in ["MUD", "ALTER", "EDIT", "DEFIN", "TROC", "APLIC", "ADIC"])
-        tem_elemento = any(k in msg_norm for k in ["VIGA", "LAJE", "PILAR", "CARGA", "SOBRECARGA"])
-        
-        if eh_mutacao and tem_elemento:
-            try:
-                res_mut = self.orchestrator.processar_comando_local(msg, {"edificio_nome": self.edificio_ativo or "054"})
+            if eh_afirmacao:
+                pend = self.modificacao_pendente
+                self.modificacao_pendente = None
+                res_mut = self.orchestrator.registry.executar_ferramenta(pend["funcao"], pend["parametros"])
                 if res_mut.get("status") == "sucesso":
                     elem_tipo = res_mut.get("elemento", "").capitalize()
                     nome_elem = res_mut.get("nome", "")
@@ -83,7 +71,7 @@ class AutqsChatAgent:
                     depois = res_mut.get("depois", {})
 
                     linhas = [
-                        f"### ✏️ Alteração no Modelador Estrutural Concluída com Sucesso!\n",
+                        f"### ✅ Alteração no Modelador Estrutural Aprovada e Aplicada com Sucesso!\n",
                         f"- **Edifício:** `{res_mut.get('edificio')}`",
                         f"- **Pavimento:** `{pav_nome}`",
                         f"- **Elemento:** `{elem_tipo} {nome_elem}`\n",
@@ -120,16 +108,121 @@ class AutqsChatAgent:
                         "texto": "\n".join(linhas),
                         "dados": res_mut,
                     }
-                elif res_mut.get("status") == "erro":
+                else:
                     return {
                         "tipo": "erro",
                         "texto": f"❌ **Erro na alteração do modelo:** {res_mut.get('mensagem', 'Operação não concluída.')}"
                     }
-            except Exception as e:
+            elif eh_negacao:
+                self.modificacao_pendente = None
                 return {
-                    "tipo": "erro",
-                    "texto": f"❌ **Erro ao processar edição no modelador:**\n\n`{str(e)}`"
+                    "tipo": "texto",
+                    "texto": "🚫 **Modificação cancelada pelo usuário.**\n\nNenhuma alteração foi gravada. O modelo estrutural permanece inalterado."
                 }
+            else:
+                self.modificacao_pendente = None
+
+        # 2. Pergunta sobre edifícios disponíveis
+        if any(k in msg_norm for k in ["QUAI", "LIST", "MOSTR", "EXIB"]) and any(k in msg_norm for k in ["EDIF", "PROJET", "OBRA"]) and not any(k in msg_norm for k in ["PAVIMENT", "PISO", "VIGA", "LAJE", "PILAR", "CARGA"]):
+            edificios = TQSBuildingReader.listar_edificios_disponiveis()
+            linhas = ["### 🏢 Edifícios Detectados no Sistema TQS:\n"]
+            for e in edificios:
+                status = "✅ **Pronto para Emissão (Pórtico OK)**" if e["processado"] else "⚠️ *Requer Processamento no TQS*"
+                linhas.append(f"- **{e['nome']}**\n  - Status: {status}\n  - Pasta: `{e['caminho']}`")
+            
+            linhas.append("\n*Para operar um edifício, digite por exemplo:* `Mudar para edifício 054` ou `Gere a planta de cargas`")
+            return {
+                "tipo": "listagem_edificios",
+                "texto": "\n".join(linhas),
+                "dados": edificios,
+            }
+
+        # 3. SOLICITAÇÃO DE EDIÇÃO NO MODELADOR ESTRUTURAL (Requer Aprovação Obrigatória)
+        mut = self.orchestrator.extrair_intencao_mutacao(msg, {"edificio_nome": self.edificio_ativo or "054"})
+        if mut:
+            from src.tqs_adapter.model_editor import TQSModelEditor
+            ed_nome = mut["parametros"].get("edificio_nome", "054")
+            pav = mut["parametros"].get("pavimento", "terreo")
+            tipo_elem = mut.get("tipo_elemento", "elemento")
+
+            detalhes_tabela = []
+            elem_nome = ""
+
+            try:
+                with TQSModelEditor(ed_nome) as editor:
+                    if tipo_elem == "viga":
+                        ident = mut["parametros"].get("identificador_viga", "")
+                        v = editor.obter_viga(pav, ident)
+                        if not v:
+                            return {"tipo": "erro", "texto": f"❌ Viga '{ident}' não foi localizada no pavimento '{pav}'."}
+                        elem_nome = v["nome"]
+                        b_novo = mut["parametros"].get("b_cm")
+                        h_novo = mut["parametros"].get("h_cm")
+                        desn_novo = mut["parametros"].get("desnivel_cm")
+                        if b_novo is not None:
+                            detalhes_tabela.append(f"| **Largura (b)** | `{v['b_cm']:.0f} cm` | **`{b_novo:.0f} cm`** |")
+                        if h_novo is not None:
+                            detalhes_tabela.append(f"| **Altura (h)** | `{v['h_cm']:.0f} cm` | **`{h_novo:.0f} cm`** |")
+                        if desn_novo is not None:
+                            detalhes_tabela.append(f"| **Desnível** | `{v['desnivel_cm']:.1f} cm` | **`{desn_novo:.1f} cm`** |")
+
+                    elif tipo_elem == "laje":
+                        ident = mut["parametros"].get("identificador_laje", "")
+                        l = editor.obter_laje(pav, ident)
+                        if not l:
+                            return {"tipo": "erro", "texto": f"❌ Laje '{ident}' não foi localizada no pavimento '{pav}'."}
+                        elem_nome = l["nome"]
+                        esp_novo = mut["parametros"].get("espessura_cm")
+                        desn_novo = mut["parametros"].get("desnivel_cm")
+                        if esp_novo is not None:
+                            detalhes_tabela.append(f"| **Espessura** | `{l['espessura_cm']:.1f} cm` | **`{esp_novo:.1f} cm`** |")
+                        if desn_novo is not None:
+                            detalhes_tabela.append(f"| **Desnível** | `{l['desnivel_cm']:.1f} cm` | **`{desn_novo:.1f} cm`** |")
+                        if mut["parametros"].get("carga_permanente_tf_m2") is not None:
+                            detalhes_tabela.append(f"| **Carga Permanente (g)** | - | **`{mut['parametros']['carga_permanente_tf_m2']:.2f} tf/m²`** |")
+                        if mut["parametros"].get("carga_acidental_tf_m2") is not None:
+                            detalhes_tabela.append(f"| **Carga Acidental (q)** | - | **`{mut['parametros']['carga_acidental_tf_m2']:.2f} tf/m²`** |")
+
+                    elif tipo_elem == "pilar":
+                        ident = mut["parametros"].get("identificador_pilar", "")
+                        p = editor.obter_pilar(pav, ident)
+                        if not p:
+                            return {"tipo": "erro", "texto": f"❌ Pilar '{ident}' não foi localizado no pavimento '{pav}'."}
+                        elem_nome = p["nome"]
+                        b_novo = mut["parametros"].get("b_cm")
+                        h_novo = mut["parametros"].get("h_cm")
+                        if b_novo is not None:
+                            detalhes_tabela.append(f"| **Largura (b)** | `{p['b_cm']:.0f} cm` | **`{b_novo:.0f} cm`** |")
+                        if h_novo is not None:
+                            detalhes_tabela.append(f"| **Comprimento (h)** | `{p['h_cm']:.0f} cm` | **`{h_novo:.0f} cm`** |")
+
+            except Exception as e:
+                return {"tipo": "erro", "texto": f"❌ Erro ao inspecionar elemento no modelo: {e}"}
+
+            if not detalhes_tabela:
+                return {"tipo": "texto", "texto": "⚠️ Nenhuma alteração geométrica identificada para aplicar."}
+
+            self.modificacao_pendente = mut
+
+            linhas = [
+                "### ⚠️ Solicitação de Aprovação: Modificação no Modelo Estrutural TQS\n",
+                f"- **Edifício:** `{ed_nome}`",
+                f"- **Pavimento:** `{pav.upper()}`",
+                f"- **Elemento:** `{tipo_elem.capitalize()} {elem_nome}`\n",
+                "| Parâmetro | Valor Atual | Novo Valor Proposto |",
+                "| :--- | :---: | :---: |",
+            ] + detalhes_tabela + [
+                "\n> [!WARNING]",
+                "> **REGRA DE SEGURANÇA:** Toda e qualquer modificação no modelo estrutural deve ser previamente aprovada pelo usuário.",
+                "\nDeseja aprovar e aplicar esta alteração no modelo estrutural?",
+                "👉 Responda **sim** para aprovar ou **não** para cancelar."
+            ]
+
+            return {
+                "tipo": "solicitacao_aprovacao",
+                "texto": "\n".join(linhas),
+                "dados": mut
+            }
 
         # 4. CONSULTA / LISTAGEM NO MODELADOR ESTRUTURAL
         pediu_consulta_modelo = any(k in msg_norm for k in ["LIST", "QUAI", "MOSTR", "VER", "EXIB"]) and any(k in msg_norm for k in ["PAVIMENT", "PISO", "VIGA", "LAJE", "PILAR", "CARGA"])

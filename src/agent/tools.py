@@ -2,6 +2,7 @@ from typing import Dict, Any, List, Optional
 from src.skills.case_01_planta_cargas.skill import PlantaDeCargasSkill
 from src.skills.case_02_processamento.skill import ProcessamentoEdificioSkill
 from src.skills.case_03_formas_alvenaria.skill import FormasAlvenariaSkill
+from src.skills.case_04_otimizacao_pilares.skill import OtimizacaoPilaresSkill
 from src.tqs_adapter.model_editor import TQSModelEditor
 
 class ToolsRegistry:
@@ -16,6 +17,7 @@ class ToolsRegistry:
         self.registrar_skill(PlantaDeCargasSkill())
         self.registrar_skill(ProcessamentoEdificioSkill())
         self.registrar_skill(FormasAlvenariaSkill())
+        self.registrar_skill(OtimizacaoPilaresSkill())
 
     def registrar_skill(self, skill):
         self._skills[skill.nome] = skill
@@ -95,6 +97,36 @@ class ToolsRegistry:
                             "escala": {
                                 "type": "integer",
                                 "description": "Escala do desenho (padrão 50)."
+                            }
+                        },
+                        "required": ["edificio_nome"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "analisar_pilares_edificio",
+                    "description": self._skills["analisar_pilares_edificio"].descricao,
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "edificio_nome": {
+                                "type": "string",
+                                "description": "Nome ou código do edifício TQS (ex: '054' ou nome completo)."
+                            },
+                            "pilar": {
+                                "type": "string",
+                                "description": "Opcional: filtrar análise para um pilar específico (ex: 'P4')."
+                            },
+                            "formato": {
+                                "type": "string",
+                                "enum": ["resumo", "terminal", "json"],
+                                "description": "Formato de saída: 'resumo' (padrão para gastar menos tokens), 'terminal' (tabela) ou 'json'."
+                            },
+                            "largura_fixa": {
+                                "type": "boolean",
+                                "description": "Use true apenas se o usuário disser que a largura dos pilares não pode mudar; sugestões alteram só o comprimento h."
                             }
                         },
                         "required": ["edificio_nome"]

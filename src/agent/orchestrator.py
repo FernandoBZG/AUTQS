@@ -80,55 +80,10 @@ class AutqsAgentOrchestrator:
             if not any(k in cmd_norm for k in ["VIGA", "LAJE", "PILAR"]):
                 return self.registry.executar_ferramenta("listar_pavimentos_modelo", params)
 
-        # 4. Edição de Viga no Modelador
-        # Ex: "mude a viga V1 para 20x60", "altere viga V12 b=20 h=60 no térreo"
-        if any(k in cmd_norm for k in ["MUD", "ALTER", "EDIT", "DEFIN", "TROC"]) and any(k in cmd_norm for k in ["VIGA"]):
-            v_match = re.search(r'\b[vV](\d+)\b', comando)
-            sec_match = re.search(r'(\d+)\s*[xX]\s*(\d+)', comando)
-            b_match = re.search(r'\bb\s*[:=]\s*(\d+)', cmd_lower)
-            h_match = re.search(r'\bh\s*[:=]\s*(\d+)', cmd_lower)
-
-            if v_match:
-                params["identificador_viga"] = f"V{v_match.group(1)}"
-            if sec_match:
-                params["b_cm"] = float(sec_match.group(1))
-                params["h_cm"] = float(sec_match.group(2))
-            else:
-                if b_match:
-                    params["b_cm"] = float(b_match.group(1))
-                if h_match:
-                    params["h_cm"] = float(h_match.group(1))
-
-            if "pavimento" not in params:
-                pav_match = re.search(r'(?:no|do|pavimento|piso)\s+([a-zA-Z0-9_\^]+(?:\s+[a-zA-Z0-9_\^]+)?)', cmd_lower)
-                params["pavimento"] = pav_match.group(1) if pav_match else "terreo"
-
-            return self.registry.executar_ferramenta("editar_viga_modelo", params)
-
-        # 5. Edição de Laje no Modelador
-        # Ex: "mude a laje L3 para espessura 14", "altere a laje L1 h=14", "carga acidental na laje L3 para 0.3"
-        if any(k in cmd_norm for k in ["MUD", "ALTER", "EDIT", "DEFIN", "APLIC", "ADIC"]) and any(k in cmd_norm for k in ["LAJE"]):
-            l_match = re.search(r'\b[lL](\d+)\b', comando)
-            if l_match:
-                params["identificador_laje"] = f"L{l_match.group(1)}"
-
-            esp_match = re.search(r'(?:espessura|h|esp)\s*(?:=|de|para)?\s*(\d+(?:[.,]\d+)?)', cmd_lower)
-            if esp_match:
-                params["espessura_cm"] = float(esp_match.group(1).replace(",", "."))
-
-            c_acid = re.search(r'(?:acidental|sobrecarga|acid|q)\s*(?:=|de|para)?\s*(\d+(?:[.,]\d+)?)', cmd_lower)
-            if c_acid:
-                params["carga_acidental_tf_m2"] = float(c_acid.group(1).replace(",", "."))
-
-            c_perm = re.search(r'(?:permanente|perm|g)\s*(?:=|de|para)?\s*(\d+(?:[.,]\d+)?)', cmd_lower)
-            if c_perm:
-                params["carga_permanente_tf_m2"] = float(c_perm.group(1).replace(",", "."))
-
-            if "pavimento" not in params:
-                pav_match = re.search(r'(?:no|do|pavimento|piso)\s+([a-zA-Z0-9_\^]+(?:\s+[a-zA-Z0-9_\^]+)?)', cmd_lower)
-                params["pavimento"] = pav_match.group(1) if pav_match else "2"
-
-            return self.registry.executar_ferramenta("editar_laje_modelo", params)
+        # 4. Edição de Elementos no Modelador (Vigas, Lajes, Pilares)
+        mut = self.extrair_intencao_mutacao(comando, params)
+        if mut:
+            return self.registry.executar_ferramenta(mut["funcao"], mut["parametros"])
 
         # 6. Listagem de elementos de um pavimento (vigas, lajes, pilares)
         if any(k in cmd_norm for k in ["LIST", "QUAI", "MOSTR", "VER", "EXIB"]) and any(k in cmd_norm for k in ["VIGA", "LAJE", "PILAR", "CARGA"]):
@@ -166,3 +121,106 @@ class AutqsAgentOrchestrator:
             "status": "info",
             "mensagem": f"Comando '{comando}' registrado. Consultando catálogo de ferramentas..."
         }
+
+    def extrair_intencao_mutacao(
+        self, comando: str, params_iniciais: Optional[Dict[str, Any]] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Analisa um comando de usuário e, se for uma solicitação de modificação
+        geométrica ou estrutural no modelo (viga, laje, pilar), extrai os parâmetros
+        sem executar a alteração diretamente.
+        """
+        from src.tqs_adapter.model_editor import normalizar_texto
+        cmd_norm = normalizar_texto(comando)
+        cmd_lower = comando.lower()
+        params = dict(params_iniciais or {})
+
+        eh_mutacao = any(k in cmd_norm for k in ["MUD", "ALTER", "EDIT", "DEFIN", "TROC", "APLIC", "ADIC"])
+        if not eh_mutacao:
+            return None
+
+        # Viga
+        if any(k in cmd_norm for k in ["VIGA"]):
+            v_match = re.search(r'\b[vV](\d+)\b', comando)
+            sec_match = re.search(r'(\d+)\s*[xX]\s*(\d+)', comando)
+            b_match = re.search(r'\bb\s*[:=]\s*(\d+)', cmd_lower)
+            h_match = re.search(r'\bh\s*[:=]\s*(\d+)', cmd_lower)
+
+            if v_match:
+                params["identificador_viga"] = f"V{v_match.group(1)}"
+            if sec_match:
+                params["b_cm"] = float(sec_match.group(1))
+                params["h_cm"] = float(sec_match.group(2))
+            else:
+                if b_match:
+                    params["b_cm"] = float(b_match.group(1))
+                if h_match:
+                    params["h_cm"] = float(h_match.group(1))
+
+            if "pavimento" not in params:
+                pav_match = re.search(r'(?:no|do|pavimento|piso)\s+([a-zA-Z0-9_\^]+(?:\s+[a-zA-Z0-9_\^]+)?)', cmd_lower)
+                params["pavimento"] = pav_match.group(1) if pav_match else "terreo"
+
+            return {
+                "tipo_elemento": "viga",
+                "funcao": "editar_viga_modelo",
+                "parametros": params,
+            }
+
+        # Laje
+        if any(k in cmd_norm for k in ["LAJE"]):
+            l_match = re.search(r'\b[lL](\d+)\b', comando)
+            if l_match:
+                params["identificador_laje"] = f"L{l_match.group(1)}"
+
+            esp_match = re.search(r'(?:espessura|h|esp)\s*(?:=|de|para)?\s*(\d+(?:[.,]\d+)?)', cmd_lower)
+            if esp_match:
+                params["espessura_cm"] = float(esp_match.group(1).replace(",", "."))
+
+            c_acid = re.search(r'(?:acidental|sobrecarga|acid|q)\s*(?:=|de|para)?\s*(\d+(?:[.,]\d+)?)', cmd_lower)
+            if c_acid:
+                params["carga_acidental_tf_m2"] = float(c_acid.group(1).replace(",", "."))
+
+            c_perm = re.search(r'(?:permanente|perm|g)\s*(?:=|de|para)?\s*(\d+(?:[.,]\d+)?)', cmd_lower)
+            if c_perm:
+                params["carga_permanente_tf_m2"] = float(c_perm.group(1).replace(",", "."))
+
+            if "pavimento" not in params:
+                pav_match = re.search(r'(?:no|do|pavimento|piso)\s+([a-zA-Z0-9_\^]+(?:\s+[a-zA-Z0-9_\^]+)?)', cmd_lower)
+                params["pavimento"] = pav_match.group(1) if pav_match else "2"
+
+            return {
+                "tipo_elemento": "laje",
+                "funcao": "editar_laje_modelo",
+                "parametros": params,
+            }
+
+        # Pilar
+        if any(k in cmd_norm for k in ["PILAR"]):
+            p_match = re.search(r'\b[pP](\d+)\b', comando)
+            sec_match = re.search(r'(\d+)\s*[xX]\s*(\d+)', comando)
+            b_match = re.search(r'\bb\s*[:=]\s*(\d+)', cmd_lower)
+            h_match = re.search(r'\bh\s*[:=]\s*(\d+)', cmd_lower)
+
+            if p_match:
+                params["identificador_pilar"] = f"P{p_match.group(1)}"
+            if sec_match:
+                params["b_cm"] = float(sec_match.group(1))
+                params["h_cm"] = float(sec_match.group(2))
+            else:
+                if b_match:
+                    params["b_cm"] = float(b_match.group(1))
+                if h_match:
+                    params["h_cm"] = float(h_match.group(1))
+
+            if "pavimento" not in params:
+                pav_match = re.search(r'(?:no|do|pavimento|piso)\s+([a-zA-Z0-9_\^]+(?:\s+[a-zA-Z0-9_\^]+)?)', cmd_lower)
+                params["pavimento"] = pav_match.group(1) if pav_match else "terreo"
+
+            return {
+                "tipo_elemento": "pilar",
+                "funcao": "editar_pilar_modelo",
+                "parametros": params,
+            }
+
+        return None

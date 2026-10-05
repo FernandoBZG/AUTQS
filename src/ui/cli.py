@@ -65,6 +65,51 @@ from src.tqs_adapter.model_editor import TQSModelEditor
 from src.drawing.sheet_builder import PlantaDeCargasDwgBuilder
 from src.core.models import PilarFundacao, GeometriaPilar, TipoSecao, EsforcosFundacao
 
+def solicitar_aprovacao_modificacao(
+    edificio: str,
+    pavimento: str,
+    elemento_tipo: str,
+    elemento_nome: str,
+    parametros: list,
+    auto_aprovar: bool = False
+) -> bool:
+    """
+    Exibe um resumo detalhado da modificação proposta no modelo estrutural e
+    solicita aprovação explícita do usuário antes de aplicar qualquer alteração.
+
+    Retorna True se aprovado, False se cancelado.
+    """
+    print("\n" + "=" * 75)
+    print("   SOLICITAÇÃO DE APROVAÇÃO: MODIFICAÇÃO NO MODELO ESTRUTURAL TQS")
+    print("=" * 75)
+    print(f"Edifício:  {edificio}")
+    print(f"Pavimento: {pavimento.upper()}")
+    print(f"Elemento:  {elemento_tipo.capitalize()} {elemento_nome}\n")
+    print("ALTERAÇÕES PROPOSTAS:")
+    print(f"{'Parâmetro':<24} | {'Atual':<16} | {'Proposto':<16}")
+    print("-" * 62)
+    for param, atual, proposto in parametros:
+        print(f"{param:<24} | {atual:<16} | {proposto:<16}")
+    print("-" * 62)
+    print("REGRA DE SEGURANÇA: Toda modificação no modelo estrutural deve ser aprovada pelo usuário.")
+
+    if auto_aprovar:
+        print("\n[AUTO-APROVADO] Confirmação concedida via flag (--sim / -y). Aplicando alteração...")
+        return True
+
+    try:
+        resp = input("\nDeseja aprovar e aplicar esta modificação no modelo? [s/N]: ").strip().lower()
+        aprovado = resp in ["s", "sim", "y", "yes"]
+        if aprovado:
+            print("[APROVADO] Modificação autorizada pelo usuário. Gravando no modelo estrutural...\n")
+            return True
+        else:
+            print("\n[CANCELADO] Modificação rejeitada pelo usuário. O modelo estrutural permanece inalterado.\n")
+            return False
+    except (KeyboardInterrupt, EOFError):
+        print("\n[CANCELADO] Operação interrompida. Nenhuma modificação foi aplicada ao modelo.\n")
+        return False
+
 def main():
     parser = argparse.ArgumentParser(description="AUTQS CLI - Plataforma de IA e Automação para TQS V25")
     parser.add_argument("--edificio", type=str, default=None, help="Nome ou código do edifício TQS (ex: '054' ou nome completo)")
@@ -81,14 +126,21 @@ def main():
     parser.add_argument("--vigas", action="store_true", help="Lista vigas do pavimento selecionado")
     parser.add_argument("--lajes", action="store_true", help="Lista lajes do pavimento selecionado")
     parser.add_argument("--pilares", action="store_true", help="Lista pilares do pavimento selecionado")
+    parser.add_argument("--analisar-pilares", "-ap", action="store_true", help="Analisa e diagnostica os pilares do edifício (erros, taxas de armadura, superdimensionamento)")
+    parser.add_argument("--otimizar-pilares", "-op", action="store_true", help="Gera propostas de otimização de seções dos pilares e cálculo de economia")
+    parser.add_argument("--pilar", type=str, default=None, help="Filtra a análise ou edição para um pilar específico (ex: 'P4')")
+    parser.add_argument("--largura-fixa", action="store_true", help="Na otimização de pilares, mantém a largura b e altera só o comprimento h")
+    parser.add_argument("--json", action="store_true", help="Retorna a saída da análise estrutural em formato JSON serializável")
     parser.add_argument("--editar-viga", type=str, default=None, help="Nome da viga para editar (ex: 'V1')")
     parser.add_argument("--editar-laje", type=str, default=None, help="Nome da laje para editar (ex: 'L3')")
-    parser.add_argument("--b", type=float, default=None, help="Largura b da viga em cm")
-    parser.add_argument("--h", type=float, default=None, help="Altura h da viga em cm")
+    parser.add_argument("--editar-pilar", type=str, default=None, help="Nome do pilar para editar (ex: 'P4')")
+    parser.add_argument("--b", type=float, default=None, help="Largura b da viga ou pilar em cm")
+    parser.add_argument("--h", type=float, default=None, help="Altura h da viga ou pilar em cm")
     parser.add_argument("--espessura", type=float, default=None, help="Espessura da laje em cm")
     parser.add_argument("--desnivel", type=float, default=None, help="Desnível / rebaixo em cm")
     parser.add_argument("--carga-perm", type=float, default=None, help="Carga permanente g em tf/m²")
     parser.add_argument("--carga-acid", type=float, default=None, help="Carga acidental q em tf/m²")
+    parser.add_argument("--sim", "-y", "--yes", action="store_true", help="Aprova automaticamente qualquer modificação no modelo estrutural sem solicitar confirmação interativa")
 
     args = parser.parse_args()
     orchestrator = AutqsAgentOrchestrator()
@@ -140,6 +192,24 @@ def main():
     if args.tools:
         print("\n=== FERRAMENTAS DISPONÍVEIS NO AUTQS (FUNCTION CALLING) ===")
         print(json.dumps(orchestrator.listar_ferramentas(), indent=2, ensure_ascii=False))
+        return
+
+    # Análise e Diagnóstico de Pilares
+    if args.analisar_pilares or args.otimizar_pilares:
+        ed = args.edificio or "054"
+        formato = "json" if args.json else "terminal"
+        res = orchestrator.registry.executar_ferramenta("analisar_pilares_edificio", {
+            "edificio_nome": ed,
+            "pilar": args.pilar,
+            "formato": formato,
+            "largura_fixa": args.largura_fixa
+        })
+        if args.json:
+            print(json.dumps(res.get("dados_completos", res), indent=2, ensure_ascii=False))
+        else:
+            print(res.get("resumo_executivo", ""))
+        return
+
     # Geração de Planta de Formas de Alvenaria Estrutural (1ª Fiada)
     if args.formas_alvenaria:
         ed = args.edificio or "054"
@@ -170,7 +240,7 @@ def main():
     # Operações do Modelador Estrutural via CLI
     tem_op_modelo = (
         args.pavimentos or args.vigas or args.lajes or args.pilares
-        or args.editar_viga or args.editar_laje
+        or args.editar_viga or args.editar_laje or args.editar_pilar
     )
     if tem_op_modelo:
         ed = args.edificio or "054"
@@ -193,6 +263,36 @@ def main():
                     return
 
                 if args.editar_viga:
+                    viga_atual = editor.obter_viga(pav, args.editar_viga)
+                    if not viga_atual:
+                        print(f"[ERRO] Viga '{args.editar_viga}' não foi encontrada no pavimento '{pav}'.")
+                        return
+
+                    b_atual = viga_atual.get("b_cm", 0.0)
+                    h_atual = viga_atual.get("h_cm", 0.0)
+                    desn_atual = viga_atual.get("desnivel_cm", 0.0)
+
+                    b_novo = args.b if args.b is not None else b_atual
+                    h_novo = args.h if args.h is not None else h_atual
+                    desn_novo = args.desnivel if args.desnivel is not None else desn_atual
+
+                    alteracoes = []
+                    if args.b is not None:
+                        alteracoes.append(("Largura (b)", f"{b_atual:.0f} cm", f"{b_novo:.0f} cm"))
+                    if args.h is not None:
+                        alteracoes.append(("Altura (h)", f"{h_atual:.0f} cm", f"{h_novo:.0f} cm"))
+                    if args.desnivel is not None:
+                        alteracoes.append(("Desnível", f"{desn_atual:.1f} cm", f"{desn_novo:.1f} cm"))
+
+                    if not alteracoes:
+                        print("[AVISO] Nenhuma alteração informada (--b, --h ou --desnivel).")
+                        return
+
+                    if not solicitar_aprovacao_modificacao(
+                        editor.nome_edificio, pav, "Viga", viga_atual["nome"], alteracoes, auto_aprovar=args.sim
+                    ):
+                        return
+
                     res_ed = editor.editar_viga(pav, args.editar_viga, b_cm=args.b, h_cm=args.h, desnivel_cm=args.desnivel)
                     print(f"✅ {res_ed['mensagem']}")
                     print(f"   Dimensões Anteriores: {res_ed['antes']['b_cm']:.0f}x{res_ed['antes']['h_cm']:.0f} cm")
@@ -200,6 +300,36 @@ def main():
                     return
 
                 if args.editar_laje:
+                    laje_atual = editor.obter_laje(pav, args.editar_laje)
+                    if not laje_atual:
+                        print(f"[ERRO] Laje '{args.editar_laje}' não foi encontrada no pavimento '{pav}'.")
+                        return
+
+                    esp_atual = laje_atual.get("espessura_cm", 0.0)
+                    desn_atual = laje_atual.get("desnivel_cm", 0.0)
+
+                    esp_novo = args.espessura if args.espessura is not None else esp_atual
+                    desn_novo = args.desnivel if args.desnivel is not None else desn_atual
+
+                    alteracoes = []
+                    if args.espessura is not None:
+                        alteracoes.append(("Espessura (h)", f"{esp_atual:.1f} cm", f"{esp_novo:.1f} cm"))
+                    if args.desnivel is not None:
+                        alteracoes.append(("Desnível", f"{desn_atual:.1f} cm", f"{desn_novo:.1f} cm"))
+                    if args.carga_perm is not None:
+                        alteracoes.append(("Carga Perm. (g)", "-", f"{args.carga_perm:.2f} tf/m²"))
+                    if args.carga_acid is not None:
+                        alteracoes.append(("Carga Acid. (q)", "-", f"{args.carga_acid:.2f} tf/m²"))
+
+                    if not alteracoes:
+                        print("[AVISO] Nenhuma alteração informada (--espessura, --desnivel, --carga-perm ou --carga-acid).")
+                        return
+
+                    if not solicitar_aprovacao_modificacao(
+                        editor.nome_edificio, pav, "Laje", laje_atual["nome"], alteracoes, auto_aprovar=args.sim
+                    ):
+                        return
+
                     res_ed = editor.editar_laje(
                         pav, args.editar_laje,
                         espessura_cm=args.espessura,
@@ -212,6 +342,39 @@ def main():
                     print(f"   Nova Espessura:     {res_ed['depois']['espessura_cm']:.1f} cm")
                     if res_ed.get("cargas_aplicadas"):
                         print(f"   Cargas Atualizadas: {res_ed['cargas_aplicadas']}")
+                    return
+
+                if args.editar_pilar:
+                    pilar_atual = editor.obter_pilar(pav, args.editar_pilar)
+                    if not pilar_atual:
+                        print(f"[ERRO] Pilar '{args.editar_pilar}' não foi encontrado no pavimento '{pav}'.")
+                        return
+
+                    b_atual = pilar_atual.get("b_cm", 0.0)
+                    h_atual = pilar_atual.get("h_cm", 0.0)
+
+                    b_novo = args.b if args.b is not None else b_atual
+                    h_novo = args.h if args.h is not None else h_atual
+
+                    alteracoes = []
+                    if args.b is not None:
+                        alteracoes.append(("Largura (b)", f"{b_atual:.0f} cm", f"{b_novo:.0f} cm"))
+                    if args.h is not None:
+                        alteracoes.append(("Comprimento (h)", f"{h_atual:.0f} cm", f"{h_novo:.0f} cm"))
+
+                    if not alteracoes:
+                        print("[AVISO] Nenhuma dimensão informada (--b ou --h).")
+                        return
+
+                    if not solicitar_aprovacao_modificacao(
+                        editor.nome_edificio, pav, "Pilar", pilar_atual["nome"], alteracoes, auto_aprovar=args.sim
+                    ):
+                        return
+
+                    res_ed = editor.editar_pilar(pav, args.editar_pilar, b_cm=args.b, h_cm=args.h)
+                    print(f"✅ {res_ed['mensagem']}")
+                    print(f"   Dimensões Anteriores: {res_ed['antes']['b_cm']:.0f}x{res_ed['antes']['h_cm']:.0f} cm")
+                    print(f"   Novas Dimensões:     {res_ed['depois']['b_cm']:.0f}x{res_ed['depois']['h_cm']:.0f} cm")
                     return
 
                 if args.vigas:
