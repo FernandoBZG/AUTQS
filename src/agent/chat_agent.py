@@ -247,7 +247,51 @@ class AutqsChatAgent:
                     "texto": f"❌ **Erro durante o processamento do edifício:**\n\n`{str(e)}`"
                 }
 
-        # 6. Solicitação de Geração de Planta de Cargas / Gabarito
+        # 6. Solicitação de Geração de Planta de Formas de Alvenaria Estrutural
+        pediu_formas_alvenaria = any(k in msg_norm for k in ["FORMA", "ALVENAR", "FIADA", "DESFIAD", "PRE_FOR", "MODULAC"]) and any(k in msg_norm for k in ["PLANTA", "DESENH", "GERAR", "EMITIR", "CRIAR", "FAZER", "TRANSFORM"])
+        if pediu_formas_alvenaria:
+            edificio_alvo = self.edificio_ativo or "054"
+            pav_match = re.search(r'(?:pavimento|piso)\s+([a-zA-Z0-9_\^]+(?:\s+[a-zA-Z0-9_\^]+)?)', msg_lower)
+            pav_alvo = pav_match.group(1).upper() if pav_match else "TIPO A"
+
+            try:
+                res = self.orchestrator.processar_comando_local(
+                    f"gerar formas alvenaria no pavimento {pav_alvo}",
+                    {"edificio_nome": edificio_alvo, "pavimento": pav_alvo}
+                )
+                if res.get("status") == "sucesso":
+                    aud = res.get("auditoria", {})
+                    dwg_caminho = res.get("caminho_dwg")
+                    linhas = [
+                        f"### 🧱 Planta de Formas de Alvenaria Estrutural Gerada com Sucesso!\n",
+                        f"- **Edifício:** `{res.get('edificio')}`",
+                        f"- **Pavimento:** `{res.get('pavimento')}`",
+                        f"- **Escala:** `1:{res.get('escala')}`",
+                        f"- **Arquivo Executivo:** `{dwg_caminho}`",
+                        f"- **Elementos Estruturais Purgados (limpeza de poluição):** `{res.get('elementos_purgados')} elementos`",
+                        f"- **Lajes Identificadas e Sobrepostas:** `{res.get('total_lajes')} lajes` (com espessuras h)",
+                        f"- **Vãos e Esquadrias Cotados:** `{res.get('total_vaos')} aberturas`",
+                        f"- **Total de Textos Normativos:** `{aud.get('total_textos')} textos` (altura mínima: `{aud.get('min_text_height_papel_cm'):.2f} cm` no papel)",
+                        f"\n> [!TIP]\n> O desenho executivo foi gerado no formato oficial **A0-45**, integrando lajes, cotas modulares de aberturas, resumo de materiais (LISTMELV), legenda de blocos e corte esquemático de resistências dos materiais.",
+                    ]
+                    return {
+                        "tipo": "planta_formas_alvenaria_gerada",
+                        "texto": "\n".join(linhas),
+                        "arquivo_dwg": dwg_caminho,
+                        "dados": res,
+                    }
+                else:
+                    return {
+                        "tipo": "erro",
+                        "texto": f"❌ **Falha ao gerar planta de formas de alvenaria:** {res.get('erro', 'Erro desconhecido.')}"
+                    }
+            except Exception as e:
+                return {
+                    "tipo": "erro",
+                    "texto": f"❌ **Erro ao processar formas de alvenaria:**\n\n`{str(e)}`"
+                }
+
+        # 7. Solicitação de Geração de Planta de Cargas / Gabarito
         pediu_gerar_planta = (
             ("planta" in msg_lower and any(k in msg_lower for k in ["carga", "loca", "gerar", "desenh", "emitir", "funda"]))
             or any(k in msg_lower for k in ["gerar dwg", "criar dwg", "emitir prancha", "desenhar prancha", "gerar prancha", "gabarito"])

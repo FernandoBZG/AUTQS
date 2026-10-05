@@ -1,6 +1,7 @@
 from typing import Dict, Any, List, Optional
 from src.skills.case_01_planta_cargas.skill import PlantaDeCargasSkill
 from src.skills.case_02_processamento.skill import ProcessamentoEdificioSkill
+from src.skills.case_03_formas_alvenaria.skill import FormasAlvenariaSkill
 from src.tqs_adapter.model_editor import TQSModelEditor
 
 class ToolsRegistry:
@@ -14,6 +15,7 @@ class ToolsRegistry:
         # Registra as habilidades ativas na plataforma
         self.registrar_skill(PlantaDeCargasSkill())
         self.registrar_skill(ProcessamentoEdificioSkill())
+        self.registrar_skill(FormasAlvenariaSkill())
 
     def registrar_skill(self, skill):
         self._skills[skill.nome] = skill
@@ -68,6 +70,31 @@ class ToolsRegistry:
                             "gerar_planta_apos_processar": {
                                 "type": "boolean",
                                 "description": "Se verdadeiro, gera imediatamente o GABARITO.DWG da planta de cargas assim que o cálculo terminar."
+                            }
+                        },
+                        "required": ["edificio_nome"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "gerar_planta_formas_alvenaria",
+                    "description": self._skills["gerar_planta_formas_alvenaria"].descricao,
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "edificio_nome": {
+                                "type": "string",
+                                "description": "Nome ou código do edifício TQS (ex: '054' ou nome completo)."
+                            },
+                            "pavimento": {
+                                "type": "string",
+                                "description": "Nome do pavimento de alvenaria a processar (ex: 'TIPO A', '2 PAVIMENTO')."
+                            },
+                            "escala": {
+                                "type": "integer",
+                                "description": "Escala do desenho (padrão 50)."
                             }
                         },
                         "required": ["edificio_nome"]

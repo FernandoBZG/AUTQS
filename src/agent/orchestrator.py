@@ -149,7 +149,14 @@ class AutqsAgentOrchestrator:
 
             return self.registry.executar_ferramenta("listar_elementos_pavimento", params)
 
-        # 7. Geração de Planta de Cargas / Gabarito
+        # 7. Geração de Planta de Formas de Alvenaria Estrutural (1ª Fiada)
+        if any(k in cmd_norm for k in ["FORMA", "ALVENAR", "FIADA", "DESFIAD", "PRE_FOR", "MODULAC"]):
+            if "pavimento" not in params:
+                pav_match = re.search(r'(?:pavimento|piso)\s+([a-zA-Z0-9_\^]+(?:\s+[a-zA-Z0-9_\^]+)?)', cmd_lower)
+                params["pavimento"] = pav_match.group(1).upper() if pav_match else "TIPO A"
+            return self.registry.executar_ferramenta("gerar_planta_formas_alvenaria", params)
+
+        # 8. Geração de Planta de Cargas / Gabarito
         if "planta" in cmd_lower or "carga" in cmd_lower or "gabarito" in cmd_lower:
             if "caminho_saida_desenho" not in params:
                 params["caminho_saida_desenho"] = "GABARITO.DWG"

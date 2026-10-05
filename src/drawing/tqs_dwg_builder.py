@@ -423,13 +423,6 @@ class TQSDwgPlantaDeCargasBuilder:
             except Exception:
                 caminho_bkp_ts = None
 
-            nome_bkp_direto = f"{nome_base}_BKP{ext}"
-            caminho_bkp_direto = os.path.join(pasta, nome_bkp_direto) if pasta else nome_bkp_direto
-            try:
-                shutil.copy2(caminho_arquivo, caminho_bkp_direto)
-            except Exception:
-                pass
-
             return caminho_bkp_ts
         except Exception:
             return None

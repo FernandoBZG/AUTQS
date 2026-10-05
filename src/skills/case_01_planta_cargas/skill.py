@@ -103,11 +103,6 @@ class PlantaDeCargasSkill(BaseSkill):
                         caminho_backup_gerado = bkp_ts
                     except Exception:
                         pass
-                    try:
-                        bkp_direto = os.path.join(pasta_espacial, f"{nome_base}_BKP{ext}")
-                        shutil.copy2(caminho_espacial_gerado, bkp_direto)
-                    except Exception:
-                        pass
 
                 try:
                     shutil.copyfile(arquivo_desenho_gerado, caminho_espacial_gerado)

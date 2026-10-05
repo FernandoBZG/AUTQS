@@ -72,6 +72,7 @@ def main():
     parser.add_argument("--listar", "-l", action="store_true", help="Lista todos os edifícios encontrados no sistema TQS")
     parser.add_argument("--chat", "-c", action="store_true", help="Inicia o chat interativo no terminal com o Agente AUTQS")
     parser.add_argument("--processar", "-p", nargs="?", const="portico_cargas", default=None, help="Executa o processamento do edifício no TQS (opções: 'portico_cargas' ou 'global')")
+    parser.add_argument("--formas-alvenaria", action="store_true", help="Gera a Planta de Formas de Alvenaria Estrutural (1ª Fiada) executiva")
     parser.add_argument("--tools", action="store_true", help="Lista as ferramentas disponíveis para o Agente de IA")
 
     # Opções do Modelador Estrutural
@@ -139,6 +140,31 @@ def main():
     if args.tools:
         print("\n=== FERRAMENTAS DISPONÍVEIS NO AUTQS (FUNCTION CALLING) ===")
         print(json.dumps(orchestrator.listar_ferramentas(), indent=2, ensure_ascii=False))
+    # Geração de Planta de Formas de Alvenaria Estrutural (1ª Fiada)
+    if args.formas_alvenaria:
+        ed = args.edificio or "054"
+        pav = (args.pavimento or "TIPO A").upper()
+        print(f"\n=========================================================")
+        print(f"   AUTQS - FORMAS DE ALVENARIA ESTRUTURAL (1ª FIADA)")
+        print(f"=========================================================")
+        print(f"Edifício:  {ed}")
+        print(f"Pavimento: {pav}\n")
+        res = orchestrator.registry.executar_ferramenta("gerar_planta_formas_alvenaria", {
+            "edificio_nome": ed,
+            "pavimento": pav,
+            "caminho_saida_dwg": args.desenho
+        })
+        if res.get("status") == "sucesso":
+            aud = res.get("auditoria", {})
+            print(f"[OK] PLANTA DE FORMAS GERADA COM SUCESSO:")
+            print(f"     Arquivo:   {res.get('caminho_dwg')}")
+            print(f"     Lajes:     {res.get('total_lajes')} identificadas e sobrepostas")
+            print(f"     Vãos:      {res.get('total_vaos')} aberturas cotadas")
+            print(f"     Textos:    {aud.get('total_textos')} textos normativos (h_min = {aud.get('min_text_height_papel_cm'):.2f} cm no papel)")
+            print(f"     Moldura:   A0-45 (Escala 1:{res.get('escala')})")
+            print(f"\nAbra o desenho diretamente no TQS (Menu Arquivo > Abrir Desenho) para visualização e plotagem.")
+        else:
+            print(f"[ERRO] Falha ao gerar formas: {res.get('erro')}")
         return
 
     # Operações do Modelador Estrutural via CLI
@@ -339,9 +365,7 @@ def main():
                     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                     nome_base, ext = os.path.splitext(nome_dwg_espacial)
                     bkp_ts = os.path.join(pasta_espacial, f"{nome_base}_BKP_{ts}{ext}")
-                    bkp_direto = os.path.join(pasta_espacial, f"{nome_base}_BKP{ext}")
                     shutil.copy2(copia_espacial, bkp_ts)
-                    shutil.copy2(copia_espacial, bkp_direto)
                     print(f"[BACKUP] Backup da versão anterior salvo em: '{os.path.basename(bkp_ts)}'.")
                 except Exception:
                     pass
