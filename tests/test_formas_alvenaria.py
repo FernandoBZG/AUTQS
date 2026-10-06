@@ -43,24 +43,34 @@ class TestFormasAlvenaria(unittest.TestCase):
                 self.assertIn(lvl, niveis)
 
             # Valida que todos os textos de vãos (239) e lajes (10, 13) estão estritamente no edifício
+            # e que o contorno das lajes externas (Nível 237) está desenhado ao redor do edifício
             from TQS import TQSDwg
             dwg = TQSDwg.Dwg(pedmv=0)
             dwg.file.Open(saida_teste)
             it = dwg.iterator
             it.Begin()
+            linhas_237 = 0
             while True:
                 pos = it.GetElementReadPosition()
-                if pos and it.elementName == "Texto":
+                if pos:
                     lvl = it.level
-                    if lvl in [10, 13, 239]:
-                        self.assertGreaterEqual(it.x1, -1200.0, f"Texto nível {lvl} com X={it.x1} fora do edifício!")
-                        self.assertLessEqual(it.x1, 2300.0, f"Texto nível {lvl} com X={it.x1} fora do edifício!")
-                        self.assertGreaterEqual(it.y1, -1600.0, f"Texto nível {lvl} com Y={it.y1} fora do edifício!")
-                        self.assertLessEqual(it.y1, 100.0, f"Texto nível {lvl} com Y={it.y1} fora do edifício!")
-                    self.assertLessEqual(it.x1, 5000.0, f"Texto disperso em X={it.x1}!")
+                    if it.elementName == "Texto":
+                        if lvl in [10, 13, 239]:
+                            self.assertGreaterEqual(it.x1, -1200.0, f"Texto nível {lvl} com X={it.x1} fora do edifício!")
+                            self.assertLessEqual(it.x1, 2300.0, f"Texto nível {lvl} com X={it.x1} fora do edifício!")
+                            self.assertGreaterEqual(it.y1, -1600.0, f"Texto nível {lvl} com Y={it.y1} fora do edifício!")
+                            self.assertLessEqual(it.y1, 100.0, f"Texto nível {lvl} com Y={it.y1} fora do edifício!")
+                        self.assertLessEqual(it.x1, 5000.0, f"Texto disperso em X={it.x1}!")
+                    elif lvl == 237 and it.elementName in ["Linha", "Polyline"]:
+                        linhas_237 += 1
+                        self.assertGreaterEqual(it.x1, -1200.0, f"Linha 237 com X={it.x1} fora do edifício!")
+                        self.assertLessEqual(it.x1, 2300.0, f"Linha 237 com X={it.x1} fora do edifício!")
                 if not it.Next():
                     break
             dwg.file.Close()
+
+            # Assegura que todas as lajes externas estão desenhadas (não apenas uma linha isolada à direita)
+            self.assertGreaterEqual(linhas_237, 100, f"Contorno de lajes externas incompleto: {linhas_237} linhas!")
 
         finally:
             if os.path.exists(saida_teste):

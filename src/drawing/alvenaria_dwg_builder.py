@@ -195,7 +195,8 @@ class AlvenariaDwgBuilder:
         for p in posicoes_para_apagar:
             dwg.edit.Erase(p)
 
-        # 6. Sobreposição de Lajes (sempre do LAJ*.DWG nativo do pavimento)
+        # 6. Sobreposição de Lajes
+        # a) Textos identificadores das lajes (sempre do LAJ*.DWG nativo do pavimento)
         total_lajes = 0
         if p_laj and os.path.exists(p_laj):
             dwg_laj = TQSDwg.Dwg(pedmv=0)
@@ -220,6 +221,41 @@ class AlvenariaDwgBuilder:
                         break
                 dwg_laj.file.Close()
 
+        # b) Contornos e bordas das lajes exteriores e sacadas (Níveis 231 e 237)
+        lajes_ext = elementos_referencia.get("lajes_externas", [])
+        for item in lajes_ext:
+            el = item["tipo"]
+            dwg.draw.level = item["nivel"]
+            dwg.draw.color = item["cor"]
+            if el in ["Linha", "Indefinido"]:
+                dwg.draw.Line(item["x1"], item["y1"], item["x2"], item["y2"])
+            elif el == "Polyline":
+                pontos = item.get("pontos", [])
+                if len(pontos) >= 2:
+                    dwg.draw.PolyStart()
+                    for pt in pontos:
+                        dwg.draw.PolyEnterPoint(pt[0], pt[1])
+                    dwg.draw.Polyline()
+                else:
+                    dwg.draw.Line(item["x1"], item["y1"], item["x2"], item["y2"])
+
+        # Para COBERTURA: sobrepõe também as linhas de perímetro de laje do LAJ0289 nativo se existirem
+        if "COBERTURA" in pavimento.upper() and p_laj and os.path.exists(p_laj):
+            dwg_laj_cob = TQSDwg.Dwg(pedmv=0)
+            if dwg_laj_cob.file.Open(p_laj) == 0:
+                it_lc = dwg_laj_cob.iterator
+                it_lc.Begin()
+                while True:
+                    pos = it_lc.GetElementReadPosition()
+                    if pos and it_lc.level == 0 and it_lc.elementName in ["Linha", "Polyline", "Indefinido"]:
+                        if not (it_lc.x1 == 0 and it_lc.y1 == 0 and it_lc.x2 == 0 and it_lc.y2 == 0):
+                            dwg.draw.level = 237
+                            dwg.draw.color = 6
+                            dwg.draw.Line(it_lc.x1, it_lc.y1, it_lc.x2, it_lc.y2)
+                    if not it_lc.Next():
+                        break
+                dwg_laj_cob.file.Close()
+
         # 7. REGRA 4: Anotação de Dimensões de Vãos (Portas no centro, Janelas fora da parede)
         # Sempre gerado a partir dos vãos mapeados no pavimento corrente
         vaos_inseridos = self._adicionar_dimensoes_vaos_regra4(
@@ -242,7 +278,7 @@ class AlvenariaDwgBuilder:
         dwg.draw.Text(x_titulo + 4.0, y_titulo - 25.0, 12.0, 0.0, f"ESCALA: 1:{escala}")
 
         # 10. Inserção de Resumo de Materiais, Legendas e Notas Técnicas na Coluna Lateral
-        self._inserir_coluna_lateral(dwg, elementos_referencia)
+        self._inserir_coluna_lateral(dwg, elementos_referencia.get("laterais", []))
 
         # 11. REGRA 2: Carregar e Inserir o Corte Esquemático da pasta GERAIS como Bloco
         bloco_corte_inserido = False
@@ -590,16 +626,17 @@ class AlvenariaDwgBuilder:
 
     def _precarregar_elementos_referencia(
         self, pasta_pav: str, pasta_gerais: str
-    ) -> List[Dict[str, Any]]:
+    ) -> Dict[str, List[Dict[str, Any]]]:
         """
-        Pré-carrega elementos da coluna técnica lateral (Resumo de materiais,
-        legendas de blocos, notas técnicas e detalhes) a partir de uma prancha
-        de referência homologada.
-        Garante restrição espacial estrita (2250 <= X <= 4550 e -1650 <= Y <= 650)
-        para assegurar que nenhum elemento fora da coluna lateral seja importado.
-        Retorna apenas elementos_laterais.
+        Pré-carrega elementos da prancha de referência homologada:
+        1) Coluna técnica lateral (Resumo de materiais, legendas de blocos, notas
+           técnicas e detalhes) restrita a 2250 <= X <= 4550 e -1650 <= Y <= 650.
+        2) Contornos e bordas das lajes exteriores e sacadas (Níveis 231 e 237)
+           restritos à região da planta útil (-1200 <= X <= 2250 e -1600 <= Y <= 100).
+        Retorna dicionário com {'laterais': [...], 'lajes_externas': [...]}.
         """
         elementos_laterais = []
+        elementos_lajes_externas = []
         pasta_edificio = os.path.dirname(pasta_pav)
         candidatos = [
             os.path.join(pasta_edificio, "TIPO A", "PRE_FOR_1aFIADA_TIPO A.DWG"),
@@ -615,7 +652,7 @@ class AlvenariaDwgBuilder:
                 break
 
         if not p_ref:
-            return elementos_laterais
+            return {"laterais": elementos_laterais, "lajes_externas": elementos_lajes_externas}
 
         dwg_ref = TQSDwg.Dwg(pedmv=0)
         if dwg_ref.file.Open(p_ref) == 0:
@@ -627,13 +664,10 @@ class AlvenariaDwgBuilder:
                     el = it.elementName
                     lvl = it.level
                     txt = getattr(it, "text", "").strip()
-
-                    # Restrição geométrica estrita: coluna técnica à direita da planta útil
-                    # 2250 <= X <= 4550 e -1650 <= Y <= 650.
-                    # NUNCA carrega elementos de vãos (239), lajes (10, 13) ou moldura (230) da referência.
                     x_val = getattr(it, "x1", 0.0)
                     y_val = getattr(it, "y1", 0.0)
 
+                    # 1) Coluna técnica à direita da planta útil
                     if 2250.0 <= x_val <= 4550.0 and -1650.0 <= y_val <= 650.0 and lvl not in [230, 239, 10, 13]:
                         item = {
                             "tipo": el,
@@ -657,13 +691,30 @@ class AlvenariaDwgBuilder:
                             item["esc_x"] = it.xScale
                             item["esc_y"] = it.yScale
                             item["ang"] = it.insertAngle
+                        elif el == "Polyline":
+                            item["pontos"] = [it.GetPolylinePt(i) for i in range(it.xySize)]
                         elementos_laterais.append(item)
+
+                    # 2) Contornos e bordas de lajes externas (Níveis 231 e 237) no perímetro da planta
+                    elif lvl in [231, 237] and -1200.0 <= x_val <= 2250.0 and -1600.0 <= y_val <= 100.0:
+                        item = {
+                            "tipo": el,
+                            "nivel": lvl,
+                            "cor": it.color,
+                            "x1": it.x1,
+                            "y1": it.y1,
+                            "x2": it.x2,
+                            "y2": it.y2,
+                        }
+                        if el == "Polyline":
+                            item["pontos"] = [it.GetPolylinePt(i) for i in range(it.xySize)]
+                        elementos_lajes_externas.append(item)
 
                 if not it.Next():
                     break
             dwg_ref.file.Close()
 
-        return elementos_laterais
+        return {"laterais": elementos_laterais, "lajes_externas": elementos_lajes_externas}
 
     def _inserir_coluna_lateral(
         self,
@@ -676,19 +727,23 @@ class AlvenariaDwgBuilder:
             dwg.draw.level = item["nivel"]
             dwg.draw.color = item["cor"]
 
-            if el in ["Linha", "Polyline", "Indefinido"]:
+            if el in ["Linha", "Indefinido"]:
                 dwg.draw.Line(item["x1"], item["y1"], item["x2"], item["y2"])
+            elif el == "Polyline":
+                pontos = item.get("pontos", [])
+                if len(pontos) >= 2:
+                    dwg.draw.PolyStart()
+                    for pt in pontos:
+                        dwg.draw.PolyEnterPoint(pt[0], pt[1])
+                    dwg.draw.Polyline()
+                else:
+                    dwg.draw.Line(item["x1"], item["y1"], item["x2"], item["y2"])
             elif el == "Texto":
                 dwg.draw.Text(item["x1"], item["y1"], item["h"], item["ang"], item["texto"])
             elif el == "Circulo":
                 dwg.draw.Circle(item["xc"], item["yc"], item["raio"])
             elif el == "Bloco" and item.get("bloco"):
                 dwg.draw.BlockInsert(item["bloco"], item["x1"], item["y1"], item["esc_x"], item["esc_y"], item["ang"])
-
-        # Garante o fechamento da borda da laje externa direita (X=2178.1 de Y=-1387.5 até Y=-117.5)
-        dwg.draw.level = 237
-        dwg.draw.color = 6
-        dwg.draw.Line(2178.1, -1387.5, 2178.1, -117.5)
 
         # Garante o fechamento da borda completa da LEGENDA - BLOCOS CERÂMICOS (Nível 0, Cor 7)
         x_leg_0, x_leg_1 = 3800.3, 4290.8
