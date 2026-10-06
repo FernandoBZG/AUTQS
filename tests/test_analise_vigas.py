@@ -139,24 +139,90 @@ class TestAnaliseVigas(unittest.TestCase):
         self.assertEqual(metricas["total_vigas"], 61)
         self.assertGreaterEqual(metricas["vigas_criticas"], 4)
 
-        # Verifica vigas críticas identificadas
+        # Verifica vigas críticas identificadas (cisalhamento e ELS)
         dados = res["dados_completos"][0]["vigas"]
         mapa_v = {v["nome"]: v for v in dados}
 
-        self.assertIn("V21", mapa_v)
-        self.assertEqual(mapa_v["V21"]["status"], "CRITICO")
-        self.assertAlmostEqual(mapa_v["V21"]["vsd_max_tf"], 85.1, delta=1.0)
-
-        self.assertIn("V8", mapa_v)
-        self.assertEqual(mapa_v["V8"]["status"], "CRITICO")
-
         self.assertIn("V3", mapa_v)
         self.assertEqual(mapa_v["V3"]["status"], "CRITICO")
+        self.assertGreater(mapa_v["V3"]["vsd_max_tf"], 300.0)
 
+        self.assertIn("V24", mapa_v)
+        self.assertEqual(mapa_v["V24"]["status"], "CRITICO")
+
+        # Vigas com flecha excessiva em ELS
+        self.assertIn("V56", mapa_v)
+        self.assertEqual(mapa_v["V56"]["status"], "CRITICO")
+        self.assertTrue(mapa_v["V56"]["tem_flecha_excessiva"])
+        self.assertGreater(mapa_v["V56"]["flecha_max_cm"], 6.0)
+
+        self.assertIn("V55", mapa_v)
+        self.assertEqual(mapa_v["V55"]["status"], "CRITICO")
+        self.assertTrue(mapa_v["V55"]["tem_flecha_excessiva"])
+
+        # Viga com armadura pesada
         self.assertIn("V10", mapa_v)
         self.assertGreater(mapa_v["V10"]["m_neg_max_tfm"], 300.0)
         self.assertGreater(mapa_v["V10"]["as_max_cm2"], 100.0)
 
+    def test_consolidacao_els_flecha_excessiva(self):
+        analyzer = TQSBeamAnalyzer("054")
+        v_estrib = {
+            "num": 99,
+            "nome": "V99",
+            "vaos": [
+                {
+                    "vao_id": "1",
+                    "comp_m": 8.0,
+                    "bw_cm": 14.0,
+                    "h_cm": 30.0,
+                    "vsd_max": 5.0,
+                    "vrd2": 25.0,
+                    "biela_ratio": 0.20,
+                    "bitola_estribo": 5.0,
+                    "espacamento_estribo": 15.0,
+                    "ramos_estribo": 2,
+                    "eh_biela_excedida": False,
+                    "eh_bitola_invalida": False,
+                    "eh_vao_curto_espurio": False,
+                }
+            ],
+        }
+        v_relger = {
+            "num": 99,
+            "nome": "V99",
+            "vaos": [
+                {
+                    "vao_id": "1",
+                    "comp_m": 8.0,
+                    "bw_cm": 14.0,
+                    "h_cm": 30.0,
+                    "flecha_cm": 6.7,
+                    "flecha_adm_cm": 2.7,
+                    "flecha_ratio": 2.48,
+                    "relacao_l_f": 119.4,
+                    "eh_flecha_excessiva": True,
+                    "eh_flecha_alerta": False,
+                    "contra_flecha_sugerida": 4.0,
+                }
+            ],
+            "m_neg_max": 2.0,
+            "m_pos_max": 5.0,
+            "as_max": 3.0,
+            "detalhes_barras": "2 B 10.0mm",
+        }
+
+        diag = analyzer._consolidar_viga(99, v_estrib, v_relger, fck_kgf_cm2=300.0)
+        self.assertEqual(diag.nome, "V99")
+        self.assertEqual(diag.status, "CRITICO")
+        self.assertTrue(diag.tem_flecha_excessiva)
+        self.assertEqual(diag.flecha_max_cm, 6.7)
+        self.assertEqual(diag.flecha_adm_cm, 2.7)
+        self.assertTrue(any("flecha excessiva" in f.lower() for f in diag.falhas))
+        self.assertIsNotNone(diag.sugestao_correcao)
+        self.assertIn("altura", diag.sugestao_correcao.lower())
+
 
 if __name__ == "__main__":
     unittest.main()
+

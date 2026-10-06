@@ -16,7 +16,7 @@ def _remover_acentos(texto: str) -> str:
 
 @dataclass
 class VigaVao:
-    """Dados estruturais de um vão específico de viga."""
+    """Dados estruturais de um vão específico de viga (ELU e ELS)."""
     vao_id: str
     comp_m: float
     bw_cm: float
@@ -31,10 +31,19 @@ class VigaVao:
     eh_bitola_invalida: bool = False
     eh_vao_curto_espurio: bool = False
 
+    # ELS (Estado Limite de Serviço - Flechas / Deformações)
+    flecha_cm: float = 0.0
+    flecha_adm_cm: float = 0.0
+    flecha_ratio: float = 0.0
+    relacao_l_f: float = 0.0  # L / f (ex: 350)
+    eh_flecha_excessiva: bool = False  # f > f_adm
+    eh_flecha_alerta: bool = False     # 0.85 <= f / f_adm <= 1.0
+    contra_flecha_sugerida_cm: float = 0.0
+
 
 @dataclass
 class VigaDiagnostico:
-    """Diagnóstico consolidado de uma viga do pavimento."""
+    """Diagnóstico consolidado de uma viga do pavimento (ELU + ELS)."""
     numero: int
     nome: str
     secao_predominante: str
@@ -47,6 +56,15 @@ class VigaDiagnostico:
     vsd_max_tf: float = 0.0
     vrd2_tf: float = 0.0
     biela_ratio_max: float = 0.0
+
+    # ELS Consolidado
+    flecha_max_cm: float = 0.0
+    flecha_adm_cm: float = 0.0
+    flecha_ratio_max: float = 0.0
+    tem_flecha_excessiva: bool = False
+    tem_flecha_alerta: bool = False
+    contra_flecha_max_cm: float = 0.0
+
     status: str = "OK"  # 'CRITICO', 'ALERTA', 'OK'
     falhas: List[str] = field(default_factory=list)
     sugestao_correcao: Optional[str] = None
@@ -93,6 +111,14 @@ class AuditoriaVigasResultado:
         return sum(1 for v in self.vigas if v.status == "OK")
 
     @property
+    def total_flechas_excessivas(self) -> int:
+        return sum(1 for v in self.vigas if v.tem_flecha_excessiva)
+
+    @property
+    def total_flechas_alerta(self) -> int:
+        return sum(1 for v in self.vigas if v.tem_flecha_alerta and not v.tem_flecha_excessiva)
+
+    @property
     def status_geral(self) -> str:
         if self.total_criticas > 0:
             return "CRITICO"
@@ -113,6 +139,8 @@ class AuditoriaVigasResultado:
                 "vigas_criticas": self.total_criticas,
                 "vigas_com_alertas": self.total_alertas,
                 "vigas_ok": self.total_ok,
+                "flechas_excessivas": self.total_flechas_excessivas,
+                "flechas_em_alerta": self.total_flechas_alerta,
                 "erros_tabela_ferros": len(self.erros_tabela_ferros),
                 "avisos_ordcon": len(self.avisos_ordcon),
             },
@@ -125,24 +153,26 @@ class AuditoriaVigasResultado:
     def para_resumo_executivo(self) -> str:
         """Resumo executivo conciso para respostas de IA com menor consumo de tokens."""
         icones = {
-            "CRITICO": "[CRITICO] RUPTURA DE BIELA OU ERROS DE DETALHAMENTO",
-            "ALERTA": "[ALERTA] VIGAS COM VAOS CURTOS OU ALTA ARMADURA",
-            "OK": "[OK] TODAS AS VIGAS APROVADAS",
+            "CRITICO": "[CRITICO] RUPTURA DE BIELA, FLECHA EXCESSIVA OU ERROS DE DETALHAMENTO",
+            "ALERTA": "[ALERTA] VIGAS COM VAOS CURTOS, ALTA ARMADURA OU FLECHA PROXIMA AO LIMITE",
+            "OK": "[OK] TODAS AS VIGAS APROVADAS EM ELU E ELS",
         }
         linhas = [
             f"Relatorio Executivo de Vigas TQS - Pavimento: {self.pavimento}",
             f"Edificio: {self.edificio} | Concreto: fck = {self.fck_kgf_cm2 / 10.0:.0f} MPa",
             f"Status: {icones.get(self.status_geral, self.status_geral)}",
             f"Estatisticas: {self.total_vigas} vigas | {self.total_criticas} criticas | {self.total_alertas} com alertas | {self.total_ok} regulares.",
+            f"ELS (Deformacoes): {self.total_flechas_excessivas} vigas com flecha excedida | {self.total_flechas_alerta} vigas em atencao (85-100% de f_adm).",
         ]
 
         criticas = [v for v in self.vigas if v.status == "CRITICO"]
         if criticas:
-            linhas.append("\nVigas Criticas (Ajuste Obrigatorio de Secao/Detalhamento):")
+            linhas.append("\nVigas Criticas (Ajuste Obrigatorio de Secao / ELS / Detalhamento):")
             for v in criticas[:8]:
                 excesso_str = f"({(v.biela_ratio_max - 1.0) * 100:+.1f}%)" if v.biela_ratio_max > 1.0 else ""
+                fl_str = f" | f={v.flecha_max_cm:.1f}cm (adm={v.flecha_adm_cm:.1f}cm)" if v.flecha_max_cm > 0 else ""
                 linhas.append(
-                    f"  * [{v.nome}] Secao {v.secao_predominante} | Vsd={v.vsd_max_tf:.1f} tf, VRd2={v.vrd2_tf:.1f} tf {excesso_str} | "
+                    f"  * [{v.nome}] Secao {v.secao_predominante} | Vsd={v.vsd_max_tf:.1f} tf, VRd2={v.vrd2_tf:.1f} tf {excesso_str}{fl_str} | "
                     f"Falhas: {', '.join(v.falhas[:2])}"
                 )
                 if v.sugestao_correcao:
@@ -150,9 +180,10 @@ class AuditoriaVigasResultado:
 
         alertas = [v for v in self.vigas if v.status == "ALERTA"]
         if alertas:
-            linhas.append("\nVigas com Alertas Secundarios (Vaos Curtos / Alta Armadura):")
+            linhas.append("\nVigas com Alertas Secundarios (Vaos Curtos / Alta Armadura / Flecha Limite):")
             for v in alertas[:6]:
-                linhas.append(f"  * [{v.nome}] Secao {v.secao_predominante} | {', '.join(v.falhas)}")
+                fl_info = f" [f={v.flecha_max_cm:.1f}cm/{v.flecha_adm_cm:.1f}cm]" if v.tem_flecha_alerta else ""
+                linhas.append(f"  * [{v.nome}] Secao {v.secao_predominante}{fl_info} | {', '.join(v.falhas[:2])}")
 
         # Top esforços de flexão
         top_flex = sorted(self.vigas, key=lambda x: max(x.m_neg_max_tfm, x.m_pos_max_tfm), reverse=True)[:5]
@@ -170,7 +201,7 @@ class AuditoriaVigasResultado:
         return "\n".join(linhas)
 
     def para_tabela_terminal(self, filtro_viga: Optional[str] = None) -> str:
-        """Gera relatório completo em tabela ASCII formatada para terminal."""
+        """Gera relatório completo em tabela ASCII formatada para terminal com ELU e ELS."""
         vigas_alvo = self.vigas
         if filtro_viga:
             alvo_norm = filtro_viga.strip().upper()
@@ -179,44 +210,48 @@ class AuditoriaVigasResultado:
             vigas_alvo = [v for v in self.vigas if v.nome.upper() == alvo_norm]
 
         linhas = [
-            "\n" + "=" * 98,
-            f"   AUDITORIA ESTRUTURAL DE VIGAS CAD/TQS - PAVIMENTO: {self.pavimento.upper()}",
-            "=" * 98,
+            "\n" + "=" * 115,
+            f"   AUDITORIA ESTRUTURAL DE VIGAS CAD/TQS (ELU + ELS) - PAVIMENTO: {self.pavimento.upper()}",
+            "=" * 115,
             f"Edificio:   {self.edificio}",
             f"Pasta:      {self.pasta_vigas}",
             f"Materiais:  fck = {self.fck_kgf_cm2 / 10.0:.0f} MPa (concreto) | fyk = {self.fyk_kgf_cm2 / 10.0:.0f} MPa (aco CA-50)",
             f"Resumo:     {self.total_vigas} Vigas | {self.total_criticas} Criticas | {self.total_alertas} Alertas | {self.total_ok} Regulares",
-            "-" * 98,
-            f"{'Viga':<6} | {'Secao':<10} | {'M- (tf.m)':<10} | {'M+ (tf.m)':<10} | {'As (cm2)':<9} | {'Vsd (tf)':<9} | {'VRd2 (tf)':<9} | {'Vsd/VRd2':<8} | {'Status':<8}",
-            "-" * 98,
+            f"ELS:        {self.total_flechas_excessivas} com Flecha Excedida (f > f_adm) | {self.total_flechas_alerta} em Atencao (f/adm >= 85%)",
+            "-" * 115,
+            f"{'Viga':<6} | {'Secao':<10} | {'M- (tf.m)':<9} | {'M+ (tf.m)':<9} | {'As (cm2)':<8} | {'Vsd (tf)':<8} | {'VRd2 (tf)':<9} | {'f (cm)':<7} | {'f.adm':<6} | {'f/adm':<6} | {'Status':<8}",
+            "-" * 115,
         ]
 
         for v in vigas_alvo:
-            ratio_str = f"{v.biela_ratio_max:.2f}" if v.biela_ratio_max > 0 else "-"
+            f_str = f"{v.flecha_max_cm:.1f}" if v.flecha_max_cm > 0 else "-"
+            f_adm_str = f"{v.flecha_adm_cm:.1f}" if v.flecha_adm_cm > 0 else "-"
+            f_ratio_str = f"{v.flecha_ratio_max * 100:.0f}%" if v.flecha_ratio_max > 0 else "-"
+
             linhas.append(
-                f"{v.nome:<6} | {v.secao_predominante:<10} | {v.m_neg_max_tfm:>10.1f} | {v.m_pos_max_tfm:>10.1f} | "
-                f"{v.as_max_cm2:>9.1f} | {v.vsd_max_tf:>9.1f} | {v.vrd2_tf:>9.1f} | {ratio_str:>8} | {v.status:<8}"
+                f"{v.nome:<6} | {v.secao_predominante:<10} | {v.m_neg_max_tfm:>9.1f} | {v.m_pos_max_tfm:>9.1f} | "
+                f"{v.as_max_cm2:>8.1f} | {v.vsd_max_tf:>8.1f} | {v.vrd2_tf:>9.1f} | {f_str:>7} | {f_adm_str:>6} | {f_ratio_str:>6} | {v.status:<8}"
             )
             if v.falhas:
                 linhas.append(f"       -> Falhas: {'; '.join(v.falhas)}")
             if v.sugestao_correcao:
                 linhas.append(f"       -> Solucao Sugerida: {v.sugestao_correcao}")
 
-        linhas.append("-" * 98)
+        linhas.append("-" * 115)
 
         if self.erros_tabela_ferros:
             linhas.append(f"\n[ERROS EM RESESTERR.LST] Total: {len(self.erros_tabela_ferros)} falhas de bitola/detalhamento.")
-            for err in self.erros_tabela_ferros[:5]:
+            for err in self.erros_tabela_ferros[:4]:
                 linhas.append(f"  * {err.strip()}")
-            if len(self.erros_tabela_ferros) > 5:
-                linhas.append(f"  ... e mais {len(self.erros_tabela_ferros) - 5} erros na tabela de ferros.")
+            if len(self.erros_tabela_ferros) > 4:
+                linhas.append(f"  ... e mais {len(self.erros_tabela_ferros) - 4} erros na tabela de ferros.")
 
         if self.avisos_ordcon:
             linhas.append(f"\n[AVISOS DE MODELAGEM EM ORDCON.LST] Total: {len(self.avisos_ordcon)} ocorrencias.")
-            for av in self.avisos_ordcon[:5]:
+            for av in self.avisos_ordcon[:4]:
                 linhas.append(f"  * {av.strip()}")
 
-        linhas.append("=" * 98 + "\n")
+        linhas.append("=" * 115 + "\n")
         return "\n".join(linhas)
 
 
@@ -225,7 +260,8 @@ class TQSBeamAnalyzer:
     Auditor e diagnosticador avançado de vigas de concreto armado no CAD/TQS V25.
     Lê e processa diretamente:
       - ESTRIB.LST: Verificação de esmagamento de bielas comprimidas (Vsd > VRd2), estribagem e vãos.
-      - RELGER.LST: Esforços envolventes de flexão (M-, M+), armaduras calculadas (As), seções e vãos.
+      - RELGER.LST: Esforços envolventes de flexão (M-, M+), armaduras calculadas (As),
+                    seções, vãos e verificações de ELS (Flechas calculadas vs Flechas admissíveis).
       - RESESTERR.LST: Erros de detalhamento e geração de ferros (bitolas sentinelas).
       - ORDCON.LST: Avisos geométricos de carregamento e consistência de apoios.
     """
@@ -340,7 +376,7 @@ class TQSBeamAnalyzer:
         if os.path.exists(caminho_relger):
             mapa_vigas_relger = self._parse_relger_lst(caminho_relger)
 
-        # 5. Consolidação e Cruzamento de Dados
+        # 5. Consolidação e Cruzamento de Dados (ELU + ELS)
         todas_chaves = sorted(list(set(list(mapa_vigas_estrib.keys()) + list(mapa_vigas_relger.keys()))))
         vigas_consolidadas = []
 
@@ -372,7 +408,6 @@ class TQSBeamAnalyzer:
         except Exception:
             return mapa
 
-        # Extrai FCK e FYK
         m_mat = re.search(r"CONCRETO\s*-\s*FCK\s*=\s*([\d\.]+)", conteudo)
         if m_mat:
             res_pai.fck_kgf_cm2 = float(m_mat.group(1))
@@ -411,11 +446,9 @@ class TQSBeamAnalyzer:
                 tem_biela_excedida = False
                 tem_bitola_invalida = False
 
-                # Processa linhas da tabela de estribos
                 for l in vb.split("\n"):
                     if re.match(r"^\s*\d+\s*-\s*\d+", l):
                         try:
-                            # Posições de corte fixas do relatório oficial TQS
                             vsd_s = l[80:86].strip()
                             vrd2_s = l[86:93].strip()
                             bitesc_s = l[93:104].strip()
@@ -447,7 +480,6 @@ class TQSBeamAnalyzer:
                         except Exception:
                             pass
 
-                # Mensagens explícitas de estouro de biela
                 m_biela_msg = re.search(
                     r"FORCA CORTANTE CALCULO=\s*([\d\.]+)\s*TF\s*EH > LIMITE COMPRESSAO BIELA =\s*([\d\.]+)",
                     vb
@@ -492,7 +524,7 @@ class TQSBeamAnalyzer:
         return mapa
 
     def _parse_relger_lst(self, caminho_arquivo: str) -> Dict[int, Dict[str, Any]]:
-        """Lê RELGER.LST e extrai esforços envolventes de flexão e armaduras longitudinais."""
+        """Lê RELGER.LST e extrai esforços envolventes de flexão, armaduras e ELS (flechas)."""
         mapa = {}
         try:
             with open(caminho_arquivo, "r", encoding="latin1", errors="ignore") as f:
@@ -509,15 +541,45 @@ class TQSBeamAnalyzer:
             v_nome = m_v.group(2).strip().split()[0]
 
             vaos_rel = []
-            for m_vao in re.finditer(
-                r"Vao=\s*(\w+)\s*/L=\s*([\d\.]+)\s*/B=\s*([\d\.]+)\s*/H=\s*([\d\.]+)",
-                chunk
-            ):
+            vaos_blocos = re.split(r"\n(?=Vao=\s*\w+)", chunk)
+            for vb in vaos_blocos:
+                m_vao = re.search(
+                    r"Vao=\s*(\w+)\s*/L=\s*([\d\.]+)\s*/B=\s*([\d\.]+)\s*/H=\s*([\d\.]+)",
+                    vb
+                )
+                if not m_vao:
+                    continue
+                vao_id = m_vao.group(1)
+                comp_m = float(m_vao.group(2))
+                bw_cm = float(m_vao.group(3)) * 100.0
+                h_cm = float(m_vao.group(4)) * 100.0
+
+                # Extrai ELS (Flechas)
+                m_fl = re.search(r"Flecha=\s*([\d\.]+)", vb)
+                m_adm = re.search(r"Fle\.?Adm\.?=\s*([\d\.]+)", vb)
+                tem_excesso_els = ("< Fl.Calc" in vb)
+
+                flecha_cm = float(m_fl.group(1)) if m_fl else 0.0
+                flecha_adm_cm = float(m_adm.group(1)) if m_adm else 0.0
+                flecha_ratio = (flecha_cm / flecha_adm_cm) if flecha_adm_cm > 0 else 0.0
+
+                relacao_l_f = (comp_m * 100.0 / flecha_cm) if flecha_cm > 0 else 0.0
+                contra_flecha = round(flecha_cm - flecha_adm_cm, 1) if flecha_cm > flecha_adm_cm else 0.0
+                eh_excedida = tem_excesso_els or (flecha_cm > flecha_adm_cm > 0.0)
+                eh_alerta = (0.85 <= flecha_ratio <= 1.0) and not eh_excedida
+
                 vaos_rel.append({
-                    "vao_id": m_vao.group(1),
-                    "comp_m": float(m_vao.group(2)),
-                    "bw_cm": float(m_vao.group(3)) * 100.0,
-                    "h_cm": float(m_vao.group(4)) * 100.0,
+                    "vao_id": vao_id,
+                    "comp_m": comp_m,
+                    "bw_cm": bw_cm,
+                    "h_cm": h_cm,
+                    "flecha_cm": flecha_cm,
+                    "flecha_adm_cm": flecha_adm_cm,
+                    "flecha_ratio": flecha_ratio,
+                    "relacao_l_f": relacao_l_f,
+                    "eh_flecha_excessiva": eh_excedida,
+                    "eh_flecha_alerta": eh_alerta,
+                    "contra_flecha_sugerida": contra_flecha,
                 })
 
             m_negs = [float(x) for x in re.findall(r"M\.\[-\]\s*=\s*([\d\.]+)\s*tf\*\s*m", chunk)]
@@ -546,14 +608,32 @@ class TQSBeamAnalyzer:
         v_relger: Optional[Dict[str, Any]],
         fck_kgf_cm2: float
     ) -> VigaDiagnostico:
-        """Cruza dados de cisalhamento e flexão para gerar diagnóstico e soluções."""
+        """Cruza dados de cisalhamento, flexão e ELS (flechas) para gerar diagnóstico e soluções."""
         nome = (v_estrib.get("nome") if v_estrib else None) or (v_relger.get("nome") if v_relger else f"V{v_num}")
-        vaos_obj = []
 
-        vaos_raw = (v_estrib.get("vaos") if v_estrib else None) or (v_relger.get("vaos") if v_relger else [])
-        for vr in vaos_raw:
+        vaos_estrib = v_estrib.get("vaos", []) if v_estrib else []
+        vaos_rel = v_relger.get("vaos", []) if v_relger else []
+
+        # Mapa de dados ELS por vao_id
+        mapa_els = {vr.get("vao_id", str(i + 1)): vr for i, vr in enumerate(vaos_rel)}
+
+        vaos_obj = []
+        vaos_fonte = vaos_estrib if vaos_estrib else vaos_rel
+
+        for i, vr in enumerate(vaos_fonte):
+            vid = vr.get("vao_id", str(i + 1))
+            els_dados = mapa_els.get(vid, {})
+
+            fl_cm = els_dados.get("flecha_cm", 0.0)
+            fl_adm = els_dados.get("flecha_adm_cm", 0.0)
+            fl_ratio = els_dados.get("flecha_ratio", 0.0)
+            rel_l_f = els_dados.get("relacao_l_f", 0.0)
+            eh_fl_exc = els_dados.get("eh_flecha_excessiva", False)
+            eh_fl_alt = els_dados.get("eh_flecha_alerta", False)
+            cf_sug = els_dados.get("contra_flecha_sugerida", 0.0)
+
             vaos_obj.append(VigaVao(
-                vao_id=vr.get("vao_id", "1"),
+                vao_id=vid,
                 comp_m=vr.get("comp_m", 0.0),
                 bw_cm=vr.get("bw_cm", 20.0),
                 h_cm=vr.get("h_cm", 60.0),
@@ -566,6 +646,13 @@ class TQSBeamAnalyzer:
                 eh_biela_excedida=vr.get("eh_biela_excedida", False),
                 eh_bitola_invalida=vr.get("eh_bitola_invalida", False),
                 eh_vao_curto_espurio=vr.get("eh_vao_curto_espurio", False),
+                flecha_cm=fl_cm,
+                flecha_adm_cm=fl_adm,
+                flecha_ratio=fl_ratio,
+                relacao_l_f=rel_l_f,
+                eh_flecha_excessiva=eh_fl_exc,
+                eh_flecha_alerta=eh_fl_alt,
+                contra_flecha_sugerida_cm=cf_sug,
             ))
 
         sec_predominante = "-"
@@ -581,10 +668,18 @@ class TQSBeamAnalyzer:
         vrd2_max = max((v.vrd2_tf for v in vaos_obj), default=0.0)
         biela_ratio_max = max((v.biela_ratio for v in vaos_obj), default=0.0)
 
+        # ELS Máximos
+        flecha_max = max((v.flecha_cm for v in vaos_obj), default=0.0)
+        flecha_adm = max((v.flecha_adm_cm for v in vaos_obj if v.flecha_cm == flecha_max), default=0.0)
+        flecha_ratio_max = max((v.flecha_ratio for v in vaos_obj), default=0.0)
+        tem_flecha_excessiva = any(v.eh_flecha_excessiva for v in vaos_obj)
+        tem_flecha_alerta = any(v.eh_flecha_alerta for v in vaos_obj)
+        contra_flecha_max = max((v.contra_flecha_sugerida_cm for v in vaos_obj), default=0.0)
+
         falhas = []
         status = "OK"
 
-        # 1. Verificação de Biela
+        # 1. Verificação de Biela (ELU - Cisalhamento)
         tem_biela_excedida = any(v.eh_biela_excedida for v in vaos_obj) or (vsd_max > vrd2_max > 0.0)
         if tem_biela_excedida:
             status = "CRITICO"
@@ -597,26 +692,45 @@ class TQSBeamAnalyzer:
             status = "CRITICO"
             falhas.append("Bitola de estribo sentinela (50.0mm) atribuida pelo TQS")
 
-        # 3. Verificação de Vãos Curtos Espúrios
+        # 3. Verificação de ELS (Flechas Excessivas)
+        if tem_flecha_excessiva:
+            status = "CRITICO"
+            for v in vaos_obj:
+                if v.eh_flecha_excessiva:
+                    excesso_fl = (v.flecha_ratio - 1.0) * 100.0 if v.flecha_ratio > 1.0 else 0.0
+                    falhas.append(
+                        f"Flecha excessiva em ELS (f = {v.flecha_cm:.1f} cm > f_adm = {v.flecha_adm_cm:.1f} cm, +{excesso_fl:.1f}%) no Vao {v.vao_id}"
+                    )
+        elif tem_flecha_alerta:
+            if status != "CRITICO":
+                status = "ALERTA"
+            for v in vaos_obj:
+                if v.eh_flecha_alerta:
+                    falhas.append(
+                        f"Flecha proxima do limite ELS ({v.flecha_cm:.1f} cm de {v.flecha_adm_cm:.1f} cm, {v.flecha_ratio * 100:.0f}%) no Vao {v.vao_id}"
+                    )
+
+        # 4. Verificação de Vãos Curtos Espúrios
         vaos_curtos = [v for v in vaos_obj if v.eh_vao_curto_espurio]
         if vaos_curtos:
-            if status != "CRITICO":
+            if status == "OK":
                 status = "ALERTA"
             falhas.append(f"Vao espurio curto ({', '.join(f'Vao {v.vao_id}: {v.comp_m*100:.0f}cm' for v in vaos_curtos)})")
 
-        # 4. Verificação de Armadura Longitudinal Pesada (> 80 cm²)
+        # 5. Verificação de Armadura Longitudinal Pesada (> 80 cm²)
         if as_max > 80.0:
-            if status != "CRITICO":
+            if status == "OK":
                 status = "ALERTA"
             falhas.append(f"Armadura longitudinal pesada ({as_max:.1f} cm2)")
 
-        # 5. Cálculo da Solução Sugerida de Engenharia
-        sugestao = None
+        # 6. Cálculo das Soluções Sugeridas de Engenharia (ELU + ELS)
+        sugestoes = []
+
+        # A) Solução para Biela Comprimida
         if tem_biela_excedida and vaos_obj:
             vao_critico = max(vaos_obj, key=lambda v: v.biela_ratio)
             bw_atual = vao_critico.bw_cm
             h_atual = vao_critico.h_cm
-
             fck_mpa = fck_kgf_cm2 / 10.0
             alpha_v2 = 1.0 - (fck_mpa / 250.0)
             fcd_tf_m2 = (fck_kgf_cm2 / 1.4) * 10.0
@@ -633,14 +747,31 @@ class TQSBeamAnalyzer:
                     h_req_cm = math.ceil(h_req_m * 100.0 / 5.0) * 5.0
 
                     if bw_req_cm > bw_atual:
-                        sugestao = f"Alargar para {bw_req_cm:.0f}x{h_atual:.0f} cm (ou elevar altura para {bw_atual:.0f}x{h_req_cm:.0f} cm)"
+                        sugestoes.append(f"Alargar para {bw_req_cm:.0f}x{h_atual:.0f} cm (ou elevar altura para {bw_atual:.0f}x{h_req_cm:.0f} cm)")
                     else:
-                        sugestao = f"Alargar secao em +5 a 10 cm na largura"
+                        sugestoes.append("Alargar secao em +5 a 10 cm na largura")
             except Exception:
-                sugestao = f"Alargar secao para suportar cortante de {vsd_max:.1f} tf"
+                sugestoes.append(f"Alargar secao para suportar cortante de {vsd_max:.1f} tf")
+
+        # B) Solução para ELS (Flechas Excessivas)
+        if tem_flecha_excessiva:
+            vao_fl_critico = max(vaos_obj, key=lambda v: v.flecha_ratio)
+            h_atual = vao_fl_critico.h_cm
+            comp_m = vao_fl_critico.comp_m
+            # NBR 6118: estimativa de h_min para flecha aproximada (L / 16 para contínua, L / 12 para biapoiada)
+            h_min_estimado_cm = math.ceil((comp_m * 100.0 / 16.0) / 5.0) * 5.0
+
+            if h_min_estimado_cm > h_atual:
+                sugestoes.append(
+                    f"Aumentar altura para h={h_min_estimado_cm:.0f} cm para vencer vao de {comp_m:.2f}m (ou adotar contra-flecha de {contra_flecha_max:.1f} cm)"
+                )
+            else:
+                sugestoes.append(f"Adotar contra-flecha executiva de {contra_flecha_max:.1f} cm no Vao {vao_fl_critico.vao_id}")
 
         elif tem_bitola_50 and vaos_curtos:
-            sugestao = "Unificar nos no modelador para eliminar vaos residuais de poucos centimetros"
+            sugestoes.append("Unificar nos no modelador para eliminar vaos residuais de poucos centimetros")
+
+        sugestao_final = " | ".join(sugestoes) if sugestoes else None
 
         return VigaDiagnostico(
             numero=v_num,
@@ -655,9 +786,15 @@ class TQSBeamAnalyzer:
             vsd_max_tf=vsd_max,
             vrd2_tf=vrd2_max,
             biela_ratio_max=biela_ratio_max,
+            flecha_max_cm=flecha_max,
+            flecha_adm_cm=flecha_adm,
+            flecha_ratio_max=flecha_ratio_max,
+            tem_flecha_excessiva=tem_flecha_excessiva,
+            tem_flecha_alerta=tem_flecha_alerta,
+            contra_flecha_max_cm=contra_flecha_max,
             status=status,
             falhas=falhas,
-            sugestao_correcao=sugestao,
+            sugestao_correcao=sugestao_final,
         )
 
     def analisar(
