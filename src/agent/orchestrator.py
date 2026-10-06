@@ -102,9 +102,16 @@ class AutqsAgentOrchestrator:
             else:
                 params["tipo_elemento"] = "todos"
 
-            return self.registry.executar_ferramenta("listar_elementos_pavimento", params)
+        # 7. Verificação de Consistência da Planta de Formas
+        if any(k in cmd_norm for k in ["CONSIST", "VERIFIC"]) and any(k in cmd_norm for k in ["PLANTA", "FORMA", "MODEL", "APOIO", "ESTRUTUR"]):
+            if "pavimento" not in params:
+                pav_match = re.search(r'(?:no|do|pavimento|piso)\s+([a-zA-Z0-9_\^]+(?:\s+[a-zA-Z0-9_\^]+)?)', cmd_lower)
+                if pav_match:
+                    params["pavimento"] = pav_match.group(1)
+            params["formato"] = "resumo"
+            return self.registry.executar_ferramenta("verificar_consistencia_planta", params)
 
-        # 7. Geração de Planta de Formas de Alvenaria Estrutural (1ª Fiada)
+        # 8. Geração de Planta de Formas de Alvenaria Estrutural (1ª Fiada)
         if any(k in cmd_norm for k in ["FORMA", "ALVENAR", "FIADA", "DESFIAD", "PRE_FOR", "MODULAC"]):
             if "pavimento" not in params:
                 pav_match = re.search(r'(?:pavimento|piso)\s+([a-zA-Z0-9_\^]+(?:\s+[a-zA-Z0-9_\^]+)?)', cmd_lower)

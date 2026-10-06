@@ -3,6 +3,7 @@ from src.skills.case_01_planta_cargas.skill import PlantaDeCargasSkill
 from src.skills.case_02_processamento.skill import ProcessamentoEdificioSkill
 from src.skills.case_03_formas_alvenaria.skill import FormasAlvenariaSkill
 from src.skills.case_04_otimizacao_pilares.skill import OtimizacaoPilaresSkill
+from src.skills.case_05_consistencia_planta.skill import ConsistenciaPlantaSkill
 from src.tqs_adapter.model_editor import TQSModelEditor
 
 class ToolsRegistry:
@@ -18,6 +19,7 @@ class ToolsRegistry:
         self.registrar_skill(ProcessamentoEdificioSkill())
         self.registrar_skill(FormasAlvenariaSkill())
         self.registrar_skill(OtimizacaoPilaresSkill())
+        self.registrar_skill(ConsistenciaPlantaSkill())
 
     def registrar_skill(self, skill):
         self._skills[skill.nome] = skill
@@ -127,6 +129,36 @@ class ToolsRegistry:
                             "largura_fixa": {
                                 "type": "boolean",
                                 "description": "Use true apenas se o usuário disser que a largura dos pilares não pode mudar; sugestões alteram só o comprimento h."
+                            }
+                        },
+                        "required": ["edificio_nome"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "verificar_consistencia_planta",
+                    "description": self._skills["verificar_consistencia_planta"].descricao,
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "edificio_nome": {
+                                "type": "string",
+                                "description": "Nome ou código do edifício TQS (ex: '054' ou nome completo)."
+                            },
+                            "pavimento": {
+                                "type": "string",
+                                "description": "Opcional: nome ou código do pavimento específico (ex: 'terreo', '2', 'cobertura') ou omitir para todos."
+                            },
+                            "executar_tqs": {
+                                "type": "boolean",
+                                "description": "Se verdadeiro, dispara o processamento no TQS para recalcular a consistência. Se falso, analisa listagens já existentes."
+                            },
+                            "formato": {
+                                "type": "string",
+                                "enum": ["resumo", "terminal", "json"],
+                                "description": "Formato de saída: 'resumo' (padrão compacto para IA economizar tokens), 'terminal' (tabela) ou 'json'."
                             }
                         },
                         "required": ["edificio_nome"]

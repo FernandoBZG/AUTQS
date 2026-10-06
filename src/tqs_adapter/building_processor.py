@@ -106,7 +106,64 @@ class TQSBuildingProcessor:
 
         return self._executar_batch(tarefas, timeout_segundos=timeout_segundos, descricao="Processamento Global Completo")
 
-    def _executar_batch(self, tarefas: List[str], timeout_segundos: int, descricao: str) -> Dict[str, Any]:
+    def verificar_consistencia_formas(
+        self,
+        pavimento: Optional[str] = None,
+        desenhar_formas: bool = True,
+        timeout_segundos: int = 240,
+    ) -> Dict[str, Any]:
+        """
+        Executa a extração e verificação de consistência da planta de formas no TQS:
+          1. Extração gráfica de formas do modelador estrutural (FXEXTME/FEXTDWG)
+          2. Compilação e checagem de consistência geométrica e vinculações (FXFORMAS)
+          3. Emissão dos relatórios de modelagem (MENAVI.LST, *.LST, ERROS.DAT)
+          4. Geração do desenho de formas (FOR00xx.DWG) se desenhar_formas=True
+        """
+        f_draw = 1 if desenhar_formas else 0
+        proc_cmd = f"PROC FORMAS 2 {f_draw}"
+
+        pasta_alvo = f"'{pavimento}'" if pavimento else "ESPACIAL"
+        tarefas = [
+            f"ARVORE '{self.pasta_raiz}'",
+            f"EDIFICIO '{self.nome_edificio}' {pasta_alvo}",
+            proc_cmd,
+        ]
+
+        # Limpa ERROS.TXT antigo na raiz do edifício para evitar falsos positivos
+        err_txt = os.path.join(self.caminho_edificio, "ERROS.TXT")
+        if os.path.exists(err_txt):
+            try:
+                os.remove(err_txt)
+            except Exception:
+                pass
+
+        res = self._executar_batch(
+            tarefas,
+            timeout_segundos=timeout_segundos,
+            descricao="Consistência de Formas",
+            exigir_cargas=False
+        )
+
+        if os.path.exists(err_txt):
+            try:
+                with open(err_txt, "r", encoding="latin-1", errors="ignore") as f:
+                    txt = f.read().strip()
+                    if txt:
+                        res["erros_extracao"] = txt
+                        res["sucesso"] = False
+                        res["status"] = "erro"
+            except Exception:
+                pass
+
+        return res
+
+    def _executar_batch(
+        self,
+        tarefas: List[str],
+        timeout_segundos: int,
+        descricao: str,
+        exigir_cargas: bool = True
+    ) -> Dict[str, Any]:
         """
         Serializa o script GERENCIADOR.DAT na pasta da obra e invoca TQS.EXE -RLST.
         """
@@ -157,7 +214,10 @@ class TQSBuildingProcessor:
                     except Exception:
                         pass
 
-            sucesso = (proc.returncode == 0) and tem_cardwg and tem_porlis
+            if exigir_cargas:
+                sucesso = (proc.returncode == 0) and tem_cardwg and tem_porlis
+            else:
+                sucesso = (proc.returncode == 0)
 
             return {
                 "status": "sucesso" if sucesso else "aviso",

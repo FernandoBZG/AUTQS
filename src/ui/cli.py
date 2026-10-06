@@ -139,7 +139,8 @@ def main():
     parser.add_argument("--espessura", type=float, default=None, help="Espessura da laje em cm")
     parser.add_argument("--desnivel", type=float, default=None, help="Desnível / rebaixo em cm")
     parser.add_argument("--carga-perm", type=float, default=None, help="Carga permanente g em tf/m²")
-    parser.add_argument("--carga-acid", type=float, default=None, help="Carga acidental q em tf/m²")
+    parser.add_argument("--consistencia", "--verificar-consistencia", "-vc", action="store_true", help="Verifica e audita a consistência da planta de formas no TQS (apoios nulos, nós fora do pilar, vigas sem apoio)")
+    parser.add_argument("--sem-processar", action="store_true", help="Na verificação de consistência, analisa listagens existentes sem redisparar o cálculo batch do TQS")
     parser.add_argument("--sim", "-y", "--yes", action="store_true", help="Aprova automaticamente qualquer modificação no modelo estrutural sem solicitar confirmação interativa")
 
     args = parser.parse_args()
@@ -235,6 +236,32 @@ def main():
             print(f"\nAbra o desenho diretamente no TQS (Menu Arquivo > Abrir Desenho) para visualização e plotagem.")
         else:
             print(f"[ERRO] Falha ao gerar formas: {res.get('erro')}")
+        return
+
+    # Verificação e Auditoria de Consistência de Formas no TQS
+    if args.consistencia:
+        ed = args.edificio or "054"
+        formato = "json" if args.json else "terminal"
+        executar_tqs = not args.sem_processar
+        pav_str = args.pavimento.upper() if args.pavimento else "TODOS"
+        print(f"\n=========================================================")
+        print(f"   AUTQS - AUDITORIA DE CONSISTÊNCIA DE FORMAS TQS")
+        print(f"=========================================================")
+        print(f"Edifício:   {ed}")
+        print(f"Pavimento:  {pav_str}")
+        print(f"Processamento: {'Recalcular via TQS (PROC FORMAS 2 1)' if executar_tqs else 'Leitura rápida de relatórios existentes'}\n")
+
+        res = orchestrator.registry.executar_ferramenta("verificar_consistencia_planta", {
+            "edificio_nome": ed,
+            "pavimento": args.pavimento,
+            "executar_tqs": executar_tqs,
+            "formato": formato
+        })
+
+        if args.json:
+            print(json.dumps(res.get("dados_pavimentos", res), indent=2, ensure_ascii=False))
+        else:
+            print(res.get("resumo_executivo", ""))
         return
 
     # Operações do Modelador Estrutural via CLI
