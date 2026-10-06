@@ -42,6 +42,26 @@ class TestFormasAlvenaria(unittest.TestCase):
             for lvl in [10, 13, 222, 230, 239, 247]:
                 self.assertIn(lvl, niveis)
 
+            # Valida que todos os textos de vãos (239) e lajes (10, 13) estão estritamente no edifício
+            from TQS import TQSDwg
+            dwg = TQSDwg.Dwg(pedmv=0)
+            dwg.file.Open(saida_teste)
+            it = dwg.iterator
+            it.Begin()
+            while True:
+                pos = it.GetElementReadPosition()
+                if pos and it.elementName == "Texto":
+                    lvl = it.level
+                    if lvl in [10, 13, 239]:
+                        self.assertGreaterEqual(it.x1, -1200.0, f"Texto nível {lvl} com X={it.x1} fora do edifício!")
+                        self.assertLessEqual(it.x1, 2300.0, f"Texto nível {lvl} com X={it.x1} fora do edifício!")
+                        self.assertGreaterEqual(it.y1, -1600.0, f"Texto nível {lvl} com Y={it.y1} fora do edifício!")
+                        self.assertLessEqual(it.y1, 100.0, f"Texto nível {lvl} com Y={it.y1} fora do edifício!")
+                    self.assertLessEqual(it.x1, 5000.0, f"Texto disperso em X={it.x1}!")
+                if not it.Next():
+                    break
+            dwg.file.Close()
+
         finally:
             if os.path.exists(saida_teste):
                 try:

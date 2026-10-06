@@ -99,6 +99,8 @@ class AlvenariaDwgBuilder:
 
         # TIPO A.DWG (arquitetura para esquadrias)
         p_tipo = self._localizar_arquivo(pasta_pav, f"{pavimento}.DWG")
+        if not p_tipo:
+            p_tipo = self._localizar_arquivo(os.path.join(caminho_edificio, "TIPO A"), "TIPO A.DWG")
 
         # CORTE ESQUEMÁTICO.DWG em GERAIS
         p_corte = None
@@ -115,14 +117,20 @@ class AlvenariaDwgBuilder:
         # 1. REGRA 1: Backup obrigatório antes de sobrescrever qualquer arquivo existente
         arquivo_backup = self._criar_backup_seguro(caminho_saida_dwg)
 
-        # 2. Mapeamento prévio dos vãos ($BLVAO): Portas (251) vs Janelas (252)
+        # 2. Mapeamento prévio dos vãos ($BLVAO): Portas (251) vs Janelas (252) no pavimento
         vaos_portas, vaos_janelas = self._mapear_vaos(p_desfiad)
 
-        # 3. Pré-carregar elementos técnicos da prancha de referência (Resumo, Legendas, Cotas, Contornos, Vãos e Lajes)
-        elementos_referencia, textos_ref_239, textos_lajes_ref = self._precarregar_elementos_referencia(pasta_pav, pasta_gerais)
+        # 3. Pré-carregar elementos técnicos da prancha de referência (apenas coluna lateral: Resumo, Legendas, Notas)
+        elementos_referencia = self._precarregar_elementos_referencia(pasta_pav, pasta_gerais)
 
         # 4. Inicializa o arquivo de saída como cópia de DesFiad1
-        shutil.copy2(p_desfiad, caminho_saida_dwg)
+        try:
+            shutil.copy2(p_desfiad, caminho_saida_dwg)
+        except PermissionError:
+            # Caso o arquivo original esteja aberto no visualizador do TQS pelo usuário
+            nome_base, ext = os.path.splitext(caminho_saida_dwg)
+            caminho_saida_dwg = f"{nome_base}_NOVO{ext}"
+            shutil.copy2(p_desfiad, caminho_saida_dwg)
 
         dwg = TQSDwg.Dwg(pedmv=0)
         res_open = dwg.file.Open(caminho_saida_dwg)
@@ -146,16 +154,16 @@ class AlvenariaDwgBuilder:
                 txt = getattr(it, "text", "").strip()
                 bname = getattr(it, "blockName", "")
 
-                # Atualiza bounding box da planta útil
+                # Atualiza bounding box da planta útil EXCLUSIVAMENTE a partir das alvenarias e vãos do pavimento
                 if lvl in [203, 213, 241, 245, 247, 248, 251, 252]:
                     for pt in [(it.x1, it.y1), (it.x2, it.y2)]:
-                        if abs(pt[0]) < 1e7 and abs(pt[1]) < 1e7:
+                        if -2500.0 < pt[0] < 3000.0 and -2500.0 < pt[1] < 1000.0:
                             bounds_planta[0] = min(bounds_planta[0], pt[0])
                             bounds_planta[1] = max(bounds_planta[1], pt[0])
                             bounds_planta[2] = min(bounds_planta[2], pt[1])
                             bounds_planta[3] = max(bounds_planta[3], pt[1])
 
-                # Critérios de purga limpos (apenas entidades primárias, preservando integridade das definições)
+                # Critérios de purga limpos
                 # a) Textos de ferro vertical (pf12.5)
                 if lvl == 198 and el == "Texto":
                     posicoes_para_apagar.add(pos)
@@ -187,31 +195,9 @@ class AlvenariaDwgBuilder:
         for p in posicoes_para_apagar:
             dwg.edit.Erase(p)
 
-        # Expande bounds_planta com os contornos das lajes externas
-        for item in elementos_referencia:
-            if item.get("nivel") in [0, 231, 237] and item.get("x1", 3000) < 2250:
-                for pt in [(item["x1"], item["y1"]), (item.get("x2", item["x1"]), item.get("y2", item["y1"]))]:
-                    bounds_planta[0] = min(bounds_planta[0], pt[0])
-                    bounds_planta[1] = max(bounds_planta[1], pt[0])
-                    bounds_planta[2] = min(bounds_planta[2], pt[1])
-                    bounds_planta[3] = max(bounds_planta[3], pt[1])
-
-        for item in textos_lajes_ref:
-            bounds_planta[0] = min(bounds_planta[0], item["x1"])
-            bounds_planta[1] = max(bounds_planta[1], item["x1"])
-            bounds_planta[2] = min(bounds_planta[2], item["y1"])
-            bounds_planta[3] = max(bounds_planta[3], item["y1"])
-
-        # 6. Sobreposição de Lajes (preferência estrita pelas lajes homologadas da referência)
+        # 6. Sobreposição de Lajes (sempre do LAJ*.DWG nativo do pavimento)
         total_lajes = 0
-        if textos_lajes_ref and len(textos_lajes_ref) > 0:
-            for item in textos_lajes_ref:
-                dwg.draw.level = item["nivel"]
-                dwg.draw.color = 0
-                dwg.draw.Text(item["x1"], item["y1"], item.get("h", 10.0), item.get("ang", 0.0), item["texto"])
-                if item["nivel"] == 10:
-                    total_lajes += 1
-        elif p_laj and os.path.exists(p_laj):
+        if p_laj and os.path.exists(p_laj):
             dwg_laj = TQSDwg.Dwg(pedmv=0)
             if dwg_laj.file.Open(p_laj) == 0:
                 it_l = dwg_laj.iterator
@@ -222,45 +208,40 @@ class AlvenariaDwgBuilder:
                         lvl = it_l.level
                         txt = it_l.text.strip()
                         if lvl in [10, 13]:
-                            dwg.draw.level = lvl
-                            dwg.draw.color = 0
-                            tx, ty = it_l.x1, it_l.y1
-                            if txt == "L1" and ty < -700:
-                                tx, ty = -277.4, -159.3
-                            elif txt == "h=10" and abs(tx - (-306.8)) < 15 and abs(ty - (-777.7)) < 15:
-                                tx, ty = -282.2, -176.3
-                            elif txt == "L2" and ty < -600:
-                                tx, ty = 1504.0, -154.5
-                            elif txt == "h=10" and abs(tx - 1655.3) < 15 and abs(ty - (-649.3)) < 15:
-                                tx, ty = 1499.1, -171.5
-                            dwg.draw.Text(tx, ty, 10.0, 0.0, txt)
-                            if lvl == 10:
-                                total_lajes += 1
+                            # Garante que o texto da laje está estritamente dentro do perímetro do edifício
+                            if (bounds_planta[0] - 80.0 <= it_l.x1 <= bounds_planta[1] + 80.0 and
+                                bounds_planta[2] - 80.0 <= it_l.y1 <= bounds_planta[3] + 80.0):
+                                dwg.draw.level = lvl
+                                dwg.draw.color = 0
+                                dwg.draw.Text(it_l.x1, it_l.y1, 10.0, 0.0, txt)
+                                if lvl == 10:
+                                    total_lajes += 1
                     if not it_l.Next():
                         break
                 dwg_laj.file.Close()
 
         # 7. REGRA 4: Anotação de Dimensões de Vãos (Portas no centro, Janelas fora da parede)
+        # Sempre gerado a partir dos vãos mapeados no pavimento corrente
         vaos_inseridos = self._adicionar_dimensoes_vaos_regra4(
-            dwg, vaos_portas, vaos_janelas, p_tipo, bounds_planta, textos_ref_239
+            dwg, vaos_portas, vaos_janelas, p_tipo, bounds_planta
         )
 
         # 8. Juntas de Movimentação e Dilatação (Nível 221)
         self._adicionar_juntas_dilatacao(dwg, bounds_planta)
 
-        # 9. Título e Escala da Planta
+        # 9. Título e Escala da Planta (posicionados diretamente acima da planta do edifício)
         dwg.draw.level = 222
         dwg.draw.color = 0
         titulo = f"PRÉ-MODULAÇÃO DE 1ª FIADA - PAVIMENTO {pavimento.upper()}"
-        y_titulo = 140.0 if bounds_planta[3] < 100.0 else bounds_planta[3] + 140.0
-        x_titulo = -1017.4 if bounds_planta[0] < -900.0 else bounds_planta[0]
+        y_titulo = bounds_planta[3] + 140.0
+        x_titulo = bounds_planta[0]
         dwg.draw.Text(x_titulo, y_titulo, 32.5, 0.0, titulo)
 
         dwg.draw.level = 250
         dwg.draw.color = 0
         dwg.draw.Text(x_titulo + 4.0, y_titulo - 25.0, 12.0, 0.0, f"ESCALA: 1:{escala}")
 
-        # 10. Inserção de Resumo de Materiais, Legendas e Cotas de Contorno
+        # 10. Inserção de Resumo de Materiais, Legendas e Notas Técnicas na Coluna Lateral
         self._inserir_coluna_lateral(dwg, elementos_referencia)
 
         # 11. REGRA 2: Carregar e Inserir o Corte Esquemático da pasta GERAIS como Bloco
@@ -269,7 +250,7 @@ class AlvenariaDwgBuilder:
             bloco_corte_inserido = self._inserir_corte_esquematico_como_bloco(dwg, p_corte)
 
         # 12. REGRA 3: Metodologia de Moldura da Planta de Cargas (CATALOGO_MOLDURAS_TQS)
-        # Bounding box considerando a planta (incluindo lajes externas), título e coluna técnica
+        # Bounding box considerando a planta, título e coluna técnica lateral
         max_y_conteudo = max(y_titulo + 20.0, 560.0)
         max_x_conteudo = max(bounds_planta[1] + 200.0, 4350.0)
         bounds_totais = (bounds_planta[0], max_x_conteudo, bounds_planta[2], max_y_conteudo)
@@ -365,7 +346,6 @@ class AlvenariaDwgBuilder:
         janelas: List[Dict[str, Any]],
         caminho_tipo: Optional[str],
         bounds_planta: List[float],
-        textos_ref_239: Optional[List[Dict[str, Any]]] = None,
     ) -> int:
         """
         REGRA 4:
@@ -376,15 +356,7 @@ class AlvenariaDwgBuilder:
         dwg.draw.level = 239
         dwg.draw.color = -1
 
-        # Se já existirem textos homologados no nível 239 no DWG de referência, insere-os diretamente
-        if textos_ref_239 and len(textos_ref_239) > 0:
-            for item in textos_ref_239:
-                dwg.draw.level = 239
-                dwg.draw.color = -1
-                dwg.draw.Text(item["x1"], item["y1"], item.get("h", 10.0), item.get("ang", 0.0), item["texto"])
-            return len(textos_ref_239)
-
-        # Mapeamento de textos de arquitetura (Nível 291 em TIPO A.DWG)
+        # Mapeamento de textos de arquitetura (Nível 291 e 239 com dimensões de esquadrias)
         arquit_aberturas = []
         if caminho_tipo and os.path.exists(caminho_tipo):
             dwg_t = TQSDwg.Dwg(pedmv=0)
@@ -393,8 +365,10 @@ class AlvenariaDwgBuilder:
                 it_t.Begin()
                 while True:
                     pos = it_t.GetElementReadPosition()
-                    if pos and it_t.level == 291 and it_t.elementName == "Texto":
-                        arquit_aberturas.append((it_t.x1, it_t.y1, it_t.text.strip()))
+                    if pos and it_t.level in [291, 239] and it_t.elementName == "Texto":
+                        txt = it_t.text.strip()
+                        if any(c in txt for c in ["x", "X", "/"]):
+                            arquit_aberturas.append((it_t.x1, it_t.y1, txt))
                     if not it_t.Next():
                         break
                 dwg_t.file.Close()
@@ -529,7 +503,7 @@ class AlvenariaDwgBuilder:
         larg_min_papel = (larg_desenho + folga_larg) / escala
         alt_min_papel = (alt_desenho + folga_alt) / escala
 
-        catalogo = [("A0-45", 118.9, 45.0)] + CATALOGO_MOLDURAS_TQS
+        catalogo = [("A0-45", 118.9, 45.0), ("A0-40", 118.9, 40.0)] + CATALOGO_MOLDURAS_TQS
         candidatos = []
         for nome, wp, hp in catalogo:
             if wp >= larg_min_papel and hp >= alt_min_papel:
@@ -548,7 +522,7 @@ class AlvenariaDwgBuilder:
         w_proj = wp * escala
         h_proj = hp * escala
 
-        if formato_selecionado == "A0-45":
+        if formato_selecionado in ["A0-45", "A0-40"]:
             x0 = -1359.7
             y0 = -1606.6
         else:
@@ -616,25 +590,22 @@ class AlvenariaDwgBuilder:
 
     def _precarregar_elementos_referencia(
         self, pasta_pav: str, pasta_gerais: str
-    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
+    ) -> List[Dict[str, Any]]:
         """
-        Pré-carrega elementos da prancha de referência:
-        - Coluna técnica (Resumo de materiais, legendas de blocos, detalhes e notas laterais);
-        - Contornos e bordas das lajes externas (Nível 237, 231 e Nível 0);
-        - Textos de vigas (Nível 216);
-        - Textos homologados de vãos e esquadrias (Nível 239);
-        - Identificadores e espessuras de lajes homologadas (Nível 10 e 13).
-        Retorna (elementos_laterais, textos_vaos_239, textos_lajes).
+        Pré-carrega elementos da coluna técnica lateral (Resumo de materiais,
+        legendas de blocos, notas técnicas e detalhes) a partir de uma prancha
+        de referência homologada.
+        Garante restrição espacial estrita (2250 <= X <= 4550 e -1650 <= Y <= 650)
+        para assegurar que nenhum elemento fora da coluna lateral seja importado.
+        Retorna apenas elementos_laterais.
         """
         elementos_laterais = []
-        textos_vaos_239 = []
-        textos_lajes = []
+        pasta_edificio = os.path.dirname(pasta_pav)
         candidatos = [
+            os.path.join(pasta_edificio, "TIPO A", "PRE_FOR_1aFIADA_TIPO A.DWG"),
+            os.path.join(pasta_edificio, "TIPO A", "EP - PRE_FOR_1aFIADA_TIPO A.DWG"),
             os.path.join(pasta_pav, "PRE_FOR_1aFIADA_TIPO A - Backup.DWG"),
             os.path.join(pasta_pav, "PRE_FOR_1aFIADA_TIPO A_BKP.DWG"),
-            os.path.join(pasta_pav, f"PRE_FOR_1aFIADA_{os.path.basename(pasta_pav)} - Backup.DWG"),
-            os.path.join(pasta_pav, f"PRE_FOR_1aFIADA_{os.path.basename(pasta_pav)}.DWG"),
-            os.path.join(os.path.dirname(pasta_pav), "2 PAVIMENTO", "PRE_FOR_1aFIADA.DWG"),
         ]
 
         p_ref = None
@@ -644,7 +615,7 @@ class AlvenariaDwgBuilder:
                 break
 
         if not p_ref:
-            return elementos_laterais, textos_vaos_239, textos_lajes
+            return elementos_laterais
 
         dwg_ref = TQSDwg.Dwg(pedmv=0)
         if dwg_ref.file.Open(p_ref) == 0:
@@ -657,20 +628,17 @@ class AlvenariaDwgBuilder:
                     lvl = it.level
                     txt = getattr(it, "text", "").strip()
 
-                    eh_resumo_ou_legenda = (it.x1 >= 2250 and it.x1 < 10000 and it.y1 > 150.0)
-                    eh_detalhe_lateral = (it.x1 >= 3650 and it.x1 < 10000 and it.y1 <= 150.0 and lvl != 230)
-                    eh_cota_contorno = (lvl in [231, 237] or (lvl == 0 and el in ["Linha", "Polyline", "Indefinido"] and it.x1 < 2250 and (it.y1 < -1300.0 or it.y1 > -200.0)))
-                    eh_texto_viga = (lvl == 216 and "VIGA" in txt)
-                    eh_vao_texto = (lvl == 239 and el == "Texto")
-                    eh_laje_texto = (lvl in [10, 13] and el == "Texto")
+                    # Restrição geométrica estrita: coluna técnica à direita da planta útil
+                    # 2250 <= X <= 4550 e -1650 <= Y <= 650.
+                    # NUNCA carrega elementos de vãos (239), lajes (10, 13) ou moldura (230) da referência.
+                    x_val = getattr(it, "x1", 0.0)
+                    y_val = getattr(it, "y1", 0.0)
 
-                    if eh_resumo_ou_legenda or eh_detalhe_lateral or eh_cota_contorno or eh_texto_viga:
-                        nivel_item = 237 if (lvl == 0 and it.x1 < 2250) else lvl
-                        cor_item = 6 if (lvl == 0 and it.x1 < 2250) else it.color
+                    if 2250.0 <= x_val <= 4550.0 and -1650.0 <= y_val <= 650.0 and lvl not in [230, 239, 10, 13]:
                         item = {
                             "tipo": el,
-                            "nivel": nivel_item,
-                            "cor": cor_item,
+                            "nivel": lvl,
+                            "cor": it.color,
                             "x1": it.x1,
                             "y1": it.y1,
                             "x2": it.x2,
@@ -690,28 +658,12 @@ class AlvenariaDwgBuilder:
                             item["esc_y"] = it.yScale
                             item["ang"] = it.insertAngle
                         elementos_laterais.append(item)
-                    elif eh_vao_texto:
-                        textos_vaos_239.append({
-                            "x1": it.x1,
-                            "y1": it.y1,
-                            "h": it.textHeight,
-                            "ang": it.textAngle,
-                            "texto": txt,
-                        })
-                    elif eh_laje_texto:
-                        textos_lajes.append({
-                            "nivel": lvl,
-                            "x1": it.x1,
-                            "y1": it.y1,
-                            "h": it.textHeight,
-                            "ang": it.textAngle,
-                            "texto": txt,
-                        })
+
                 if not it.Next():
                     break
             dwg_ref.file.Close()
 
-        return elementos_laterais, textos_vaos_239, textos_lajes
+        return elementos_laterais
 
     def _inserir_coluna_lateral(
         self,
