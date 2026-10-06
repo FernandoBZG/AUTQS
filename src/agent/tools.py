@@ -4,6 +4,7 @@ from src.skills.case_02_processamento.skill import ProcessamentoEdificioSkill
 from src.skills.case_03_formas_alvenaria.skill import FormasAlvenariaSkill
 from src.skills.case_04_otimizacao_pilares.skill import OtimizacaoPilaresSkill
 from src.skills.case_05_consistencia_planta.skill import ConsistenciaPlantaSkill
+from src.skills.case_06_analise_vigas.skill import AnaliseVigasSkill
 from src.tqs_adapter.model_editor import TQSModelEditor
 
 class ToolsRegistry:
@@ -20,6 +21,7 @@ class ToolsRegistry:
         self.registrar_skill(FormasAlvenariaSkill())
         self.registrar_skill(OtimizacaoPilaresSkill())
         self.registrar_skill(ConsistenciaPlantaSkill())
+        self.registrar_skill(AnaliseVigasSkill())
 
     def registrar_skill(self, skill):
         self._skills[skill.nome] = skill
@@ -159,6 +161,36 @@ class ToolsRegistry:
                                 "type": "string",
                                 "enum": ["resumo", "terminal", "json"],
                                 "description": "Formato de saída: 'resumo' (padrão compacto para IA economizar tokens), 'terminal' (tabela) ou 'json'."
+                            }
+                        },
+                        "required": ["edificio_nome"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "analisar_vigas_pavimento",
+                    "description": self._skills["analisar_vigas_pavimento"].descricao,
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "edificio_nome": {
+                                "type": "string",
+                                "description": "Nome ou código do edifício TQS (ex: '054' ou nome completo)."
+                            },
+                            "pavimento": {
+                                "type": "string",
+                                "description": "Opcional: nome ou código do pavimento específico (ex: '2', 'terreo') ou omitir para todos."
+                            },
+                            "viga": {
+                                "type": "string",
+                                "description": "Opcional: filtrar análise para uma viga específica (ex: 'V21' ou '21')."
+                            },
+                            "formato": {
+                                "type": "string",
+                                "enum": ["resumo", "terminal", "json"],
+                                "description": "Formato de saída: 'resumo' (padrão compacto para IA), 'terminal' (tabela) ou 'json'."
                             }
                         },
                         "required": ["edificio_nome"]

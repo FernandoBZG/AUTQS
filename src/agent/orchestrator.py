@@ -102,6 +102,18 @@ class AutqsAgentOrchestrator:
             else:
                 params["tipo_elemento"] = "todos"
 
+        # 6.5. Análise e Auditoria Estrutural de Vigas (Esforços, Dimensionamento e Bielas)
+        if any(k in cmd_norm for k in ["ANALIS", "VERIFIC", "AUDIT", "DIMENSION", "ESFORC", "BIELA", "CORTANT"]) and any(k in cmd_norm for k in ["VIGA"]):
+            if "pavimento" not in params:
+                pav_match = re.search(r'(?:no|do|pavimento|piso)\s+([a-zA-Z0-9_\^]+(?:\s+[a-zA-Z0-9_\^]+)?)', cmd_lower)
+                if pav_match:
+                    params["pavimento"] = pav_match.group(1)
+            v_match = re.search(r'\b[vV](\d+)\b', comando)
+            if v_match:
+                params["viga"] = f"V{v_match.group(1)}"
+            params["formato"] = "resumo"
+            return self.registry.executar_ferramenta("analisar_vigas_pavimento", params)
+
         # 7. Verificação de Consistência da Planta de Formas
         if any(k in cmd_norm for k in ["CONSIST", "VERIFIC"]) and any(k in cmd_norm for k in ["PLANTA", "FORMA", "MODEL", "APOIO", "ESTRUTUR"]):
             if "pavimento" not in params:

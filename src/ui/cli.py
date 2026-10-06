@@ -141,6 +141,8 @@ def main():
     parser.add_argument("--carga-perm", type=float, default=None, help="Carga permanente g em tf/m²")
     parser.add_argument("--consistencia", "--verificar-consistencia", "-vc", action="store_true", help="Verifica e audita a consistência da planta de formas no TQS (apoios nulos, nós fora do pilar, vigas sem apoio)")
     parser.add_argument("--sem-processar", action="store_true", help="Na verificação de consistência, analisa listagens existentes sem redisparar o cálculo batch do TQS")
+    parser.add_argument("--analisar-vigas", "-av", action="store_true", help="Analisa e audita esforços, dimensionamento e bielas das vigas no TQS (RELGER, ESTRIB, RESESTERR)")
+    parser.add_argument("--viga", type=str, default=None, help="Filtra a análise para uma viga específica (ex: 'V21')")
     parser.add_argument("--sim", "-y", "--yes", action="store_true", help="Aprova automaticamente qualquer modificação no modelo estrutural sem solicitar confirmação interativa")
 
     args = parser.parse_args()
@@ -260,6 +262,33 @@ def main():
 
         if args.json:
             print(json.dumps(res.get("dados_pavimentos", res), indent=2, ensure_ascii=False))
+        else:
+            print(res.get("resumo_executivo", ""))
+        return
+
+    # Análise Estrutural e Auditoria de Vigas (Esforços, Bielas e Detalhamento)
+    if args.analisar_vigas:
+        ed = args.edificio or "054"
+        formato = "json" if args.json else "terminal"
+        pav_str = args.pavimento.upper() if args.pavimento else "TODOS"
+        print(f"\n=========================================================")
+        print(f"   AUTQS - AUDITORIA ESTRUTURAL DE VIGAS CAD/TQS")
+        print(f"=========================================================")
+        print(f"Edifício:   {ed}")
+        print(f"Pavimento:  {pav_str}")
+        if args.viga:
+            print(f"Filtro:     Viga {args.viga.upper()}")
+        print(f"Listagens:  RELGER.LST, ESTRIB.LST, RESESTERR.LST, ORDCON.LST\n")
+
+        res = orchestrator.registry.executar_ferramenta("analisar_vigas_pavimento", {
+            "edificio_nome": ed,
+            "pavimento": args.pavimento,
+            "viga": args.viga,
+            "formato": formato
+        })
+
+        if args.json:
+            print(json.dumps(res.get("dados_completos", res), indent=2, ensure_ascii=False))
         else:
             print(res.get("resumo_executivo", ""))
         return
