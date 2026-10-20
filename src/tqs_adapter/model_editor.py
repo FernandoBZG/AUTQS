@@ -47,16 +47,32 @@ class TQSModelEditor:
         edificios = TQSBuildingReader.listar_edificios_disponiveis()
         id_norm = normalizar_texto(identificador)
 
-        # Critério de desempate: prioriza "CA" (Concreto Armado) e processados
+        id_upper = identificador.upper()
+        quer_ae = any(k in id_upper for k in ["AE", "ALVENARIA", "BLOCO", "FIADA", "DESFIAD"])
+        quer_ca = any(k in id_upper for k in ["CA", "CONCRETO", "VIGA", "PILAR"])
+
+        # Criterio de desempate contextual: respeita o tipo estrutural solicitado
         def score_edificio(e: Dict[str, Any]) -> int:
             score = 0
             nome = e["nome"].upper()
-            if " CA" in nome or "[CA]" in nome or nome.endswith("CA"):
-                score += 10
-            if " AE" in nome or "[AE]" in nome:
-                score -= 10
+            if quer_ae:
+                if " AE" in nome or "[AE]" in nome or "ALVENARIA" in nome:
+                    score += 25
+                if " CA" in nome or "[CA]" in nome:
+                    score -= 15
+            elif quer_ca:
+                if " CA" in nome or "[CA]" in nome:
+                    score += 25
+                if " AE" in nome or "[AE]" in nome:
+                    score -= 15
+            else:
+                if " CA" in nome or "[CA]" in nome:
+                    score += 5
+
             if e.get("processado", False):
                 score += 5
+            if id_norm == normalizar_texto(nome):
+                score += 50
             return score
 
         # Candidatos que batem com o identificador

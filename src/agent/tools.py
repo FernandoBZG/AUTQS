@@ -5,6 +5,7 @@ from src.skills.case_03_formas_alvenaria.skill import FormasAlvenariaSkill
 from src.skills.case_04_otimizacao_pilares.skill import OtimizacaoPilaresSkill
 from src.skills.case_05_consistencia_planta.skill import ConsistenciaPlantaSkill
 from src.skills.case_06_analise_vigas.skill import AnaliseVigasSkill
+from src.skills.case_07_comparacao_formas.skill import ComparacaoFormasSkill
 from src.tqs_adapter.model_editor import TQSModelEditor
 
 class ToolsRegistry:
@@ -22,6 +23,7 @@ class ToolsRegistry:
         self.registrar_skill(OtimizacaoPilaresSkill())
         self.registrar_skill(ConsistenciaPlantaSkill())
         self.registrar_skill(AnaliseVigasSkill())
+        self.registrar_skill(ComparacaoFormasSkill())
 
     def registrar_skill(self, skill):
         self._skills[skill.nome] = skill
@@ -194,6 +196,44 @@ class ToolsRegistry:
                             }
                         },
                         "required": ["edificio_nome"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "comparar_geometrias_formas",
+                    "description": self._skills["comparar_geometrias_formas"].descricao,
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "edificio_base": {
+                                "type": "string",
+                                "description": "Nome ou código do edifício base / anterior (ex: '049', '054')."
+                            },
+                            "pavimento_base": {
+                                "type": "string",
+                                "description": "Nome do pavimento no edifício base a comparar (ex: 'terreo', '2 pavimento')."
+                            },
+                            "edificio_comparado": {
+                                "type": "string",
+                                "description": "Opcional: nome ou código do edifício comparado / revisado. Se omitido, usa o mesmo edifício."
+                            },
+                            "pavimento_comparado": {
+                                "type": "string",
+                                "description": "Opcional: nome do pavimento comparado / modificado. Se omitido, usa o mesmo pavimento."
+                            },
+                            "gerar_desenho_diff": {
+                                "type": "boolean",
+                                "description": "Se verdadeiro (padrão), emite um desenho DXF com sobreposição gráfica e código de cores."
+                            },
+                            "formato": {
+                                "type": "string",
+                                "enum": ["resumo", "terminal", "json"],
+                                "description": "Formato de saída: 'resumo' (padrão para chat/LLM), 'terminal' (tabela) ou 'json'."
+                            }
+                        },
+                        "required": ["edificio_base", "pavimento_base"]
                     }
                 }
             }

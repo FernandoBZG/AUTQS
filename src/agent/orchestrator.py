@@ -114,6 +114,17 @@ class AutqsAgentOrchestrator:
             params["formato"] = "resumo"
             return self.registry.executar_ferramenta("analisar_vigas_pavimento", params)
 
+        # 6.8. Comparação de Geometrias e Plantas de Formas (Diff / O que alterou no software)
+        if any(k in cmd_norm for k in ["COMPAR", "DIFF", "ALTERO", "MUDO", "DIFERENC", "SOBREPOSIC", "REVISA"]) and any(k in cmd_norm for k in ["GEOMETR", "FORMA", "PLANTA", "PROJET", "MODEL", "ARQUITETUR", "DESENH"]):
+            params["edificio_base"] = params.get("edificio_nome", "054")
+            if "pavimento" not in params and "pavimento_base" not in params:
+                pav_match = re.search(r'(?:no|do|pavimento|piso)\s+([a-zA-Z0-9_\^]+(?:\s+[a-zA-Z0-9_\^]+)?)', cmd_lower)
+                params["pavimento_base"] = pav_match.group(1) if pav_match else "terreo"
+            else:
+                params["pavimento_base"] = params.get("pavimento", params.get("pavimento_base", "terreo"))
+            params["formato"] = "resumo"
+            return self.registry.executar_ferramenta("comparar_geometrias_formas", params)
+
         # 7. Verificação de Consistência da Planta de Formas
         if any(k in cmd_norm for k in ["CONSIST", "VERIFIC"]) and any(k in cmd_norm for k in ["PLANTA", "FORMA", "MODEL", "APOIO", "ESTRUTUR"]):
             if "pavimento" not in params:

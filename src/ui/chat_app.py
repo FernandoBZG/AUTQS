@@ -145,11 +145,13 @@ with st.expander("✨ 💡 **Capacidades do Modelo e Guia de Comandos** (Clique 
     permitindo consultar, auditar e alterar modelos estruturais em linguagem natural ou inspecionar pranchas completas.
     """)
 
-    tab_cap1, tab_cap2, tab_cap3, tab_cap4 = st.tabs([
-        "🏗️ Modelador Estrutural",
-        "📐 Planta de Cargas (DWG)",
-        "📊 Auditoria & Esforços",
-        "🤖 Raciocínio & Normas",
+    tab_cap1, tab_cap2, tab_cap3, tab_cap4, tab_cap5, tab_cap6 = st.tabs([
+        "🏗️ Modelador",
+        "📐 Cargas & Locação",
+        "🔍 Comparação de Formas",
+        "🧱 Alvenaria Estrutural",
+        "📊 Auditoria & Pilares/Vigas",
+        "🤖 Normas & IA",
     ])
 
     with tab_cap1:
@@ -217,6 +219,42 @@ with st.expander("✨ 💡 **Capacidades do Modelo e Guia de Comandos** (Clique 
 
     with tab_cap3:
         st.markdown("""
+        #### 🔍 Comparação de Geometrias e Auditoria de Formas (Case 07)
+        Compara a última geometria sem revisão no título com a planta de formas ou entre revisões do modelo:
+        - Detecta pilares com desvios $(\Delta X, \Delta Y)$ ou novas seções $(\Delta b, \Delta h)$.
+        - Identifica vigas e lajes modificadas, novas ou removidas.
+        - Emite desenho de sobreposição gráfica técnica (`DIFF_FORMAS_*.DXF`) com fundo em cinza e destaques em verde/ciano/vermelho.
+        """)
+        col_comp1, col_comp2 = st.columns(2)
+        with col_comp1:
+            if st.button("🔍 'Compare as geometrias com as formas'", key="btn_ex_comp", use_container_width=True):
+                st.session_state.queued_prompt = f"Compare as geometrias com a planta de formas do {edificio_selecionado}"
+                st.rerun()
+        with col_comp2:
+            if st.button("📑 'Auditar consistência da planta de formas'", key="btn_ex_consist", use_container_width=True):
+                st.session_state.queued_prompt = f"Verifique a consistência da planta de formas do {edificio_selecionado}"
+                st.rerun()
+
+    with tab_cap4:
+        st.markdown("""
+        #### 🧱 Alvenaria Estrutural (Case 03)
+        Geração automatizada de pré-formas de alvenaria estrutural a partir do `DesFiad1.DWG`:
+        - Extração de contornos de lajes exteriores e sacadas no Nível 237.
+        - Limpeza de poluição gráfica, cotas automáticas de vãos de portas e janelas.
+        - Inserção de resumo de materiais (LISTMELV), corte esquemático e moldura oficial.
+        """)
+        col_alv1, col_alv2 = st.columns(2)
+        with col_alv1:
+            if st.button("🧱 'Gere a pré-forma do pavimento Tipo A'", key="btn_ex_alv_tipo", use_container_width=True):
+                st.session_state.queued_prompt = f"Gere a planta de formas de alvenaria do pavimento Tipo A no edifício {edificio_selecionado}"
+                st.rerun()
+        with col_alv2:
+            if st.button("🧱 'Gere a pré-forma do 2º pavimento'", key="btn_ex_alv_2pav", use_container_width=True):
+                st.session_state.queued_prompt = f"Gere a planta de formas de alvenaria do 2 pavimento no edifício {edificio_selecionado}"
+                st.rerun()
+
+    with tab_cap5:
+        st.markdown("""
         #### 📊 Auditoria Estrutural e Esforços Críticos
         Varre a malha estrutural e o pórtico espacial para alertar sobre condições de risco antes da elaboração do projeto de fundações:
 
@@ -235,7 +273,7 @@ with st.expander("✨ 💡 **Capacidades do Modelo e Guia de Comandos** (Clique 
                 st.session_state.queued_prompt = "Quais são os pilares mais carregados?"
                 st.rerun()
 
-    with tab_cap4:
+    with tab_cap6:
         st.markdown("""
         #### 🤖 Raciocínio de Engenharia e Consultoria Normativa (Google Gemini)
         Quando ativado com uma chave gratuita do Google Gemini, o AUTQS atua como um engenheiro estrutural sênior:
@@ -395,7 +433,7 @@ for msg in st.session_state.messages:
                 if os.path.exists(dwg_path):
                     with open(dwg_path, "rb") as file_dwg:
                         st.download_button(
-                            label="📥 Baixar Arquivo .DWG",
+                            label=f"📥 Baixar Arquivo {os.path.splitext(dwg_path)[1].upper()}",
                             data=file_dwg,
                             file_name=os.path.basename(dwg_path),
                             mime="application/octet-stream",

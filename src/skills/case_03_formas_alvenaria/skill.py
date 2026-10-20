@@ -47,9 +47,15 @@ class FormasAlvenariaSkill(BaseSkill):
         if not caminho_ed or not os.path.exists(caminho_ed):
             edificios = TQSBuildingReader.listar_edificios_disponiveis()
             for ed in edificios:
-                if edificio_nome in ed["nome"] or edificio_nome == ed["nome"]:
+                if edificio_nome.lower() in ed["nome"].lower() or edificio_nome == ed["nome"]:
                     caminho_ed = ed["caminho"]
                     break
+            if not caminho_ed:
+                tokens = [t.lower() for t in edificio_nome.split() if len(t) > 1]
+                for ed in edificios:
+                    if all(t in ed["nome"].lower() for t in tokens):
+                        caminho_ed = ed["caminho"]
+                        break
 
         if not caminho_ed or not os.path.exists(caminho_ed):
             return {
@@ -58,6 +64,22 @@ class FormasAlvenariaSkill(BaseSkill):
                 "edificio": edificio_nome,
                 "erro": f"Edifício '{edificio_nome}' não foi encontrado no ambiente TQS.",
             }
+
+        # Resolve pavimento flexivelmente se pasta direta não existir
+        pasta_pav = os.path.join(caminho_ed, pavimento)
+        if not os.path.exists(pasta_pav):
+            import re
+            pav_digits = re.findall(r"\d+", pavimento)
+            for item in os.listdir(caminho_ed):
+                p_cand = os.path.join(caminho_ed, item)
+                if os.path.isdir(p_cand):
+                    item_digits = re.findall(r"\d+", item)
+                    if pav_digits and item_digits and pav_digits[0] == item_digits[0]:
+                        pavimento = item
+                        break
+                    elif pavimento.lower() in item.lower():
+                        pavimento = item
+                        break
 
         builder = AlvenariaDwgBuilder()
         try:

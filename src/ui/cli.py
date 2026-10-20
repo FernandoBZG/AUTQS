@@ -143,6 +143,10 @@ def main():
     parser.add_argument("--sem-processar", action="store_true", help="Na verificação de consistência, analisa listagens existentes sem redisparar o cálculo batch do TQS")
     parser.add_argument("--analisar-vigas", "-av", action="store_true", help="Analisa e audita esforços, dimensionamento e bielas das vigas no TQS (RELGER, ESTRIB, RESESTERR)")
     parser.add_argument("--viga", type=str, default=None, help="Filtra a análise para uma viga específica (ex: 'V21')")
+    parser.add_argument("--comparar-formas", "--diff-formas", "-cf", action="store_true", help="Compara duas plantas de formas/geometrias no TQS para auditar o que mudou no software")
+    parser.add_argument("--edificio-comp", type=str, default=None, help="Nome do edifício comparado (revisão R01, pasta de teste ou comparada)")
+    parser.add_argument("--pavimento-comp", type=str, default=None, help="Nome do pavimento comparado no edifício comparado")
+    parser.add_argument("--sem-desenho", action="store_true", help="Não gera o desenho DXF de sobreposição gráfica comparativa")
     parser.add_argument("--sim", "-y", "--yes", action="store_true", help="Aprova automaticamente qualquer modificação no modelo estrutural sem solicitar confirmação interativa")
 
     args = parser.parse_args()
@@ -284,6 +288,31 @@ def main():
             "edificio_nome": ed,
             "pavimento": args.pavimento,
             "viga": args.viga,
+            "formato": formato
+        })
+
+        if args.json:
+            print(json.dumps(res.get("dados_completos", res), indent=2, ensure_ascii=False))
+        else:
+            print(res.get("resumo_executivo", ""))
+        return
+
+    # Comparação de Geometrias e Plantas de Formas (Diff / O que alterou no software)
+    if args.comparar_formas:
+        ed_base = args.edificio or "054"
+        pav_base = args.pavimento or "terreo"
+        ed_comp = args.edificio_comp or ed_base
+        pav_comp = args.pavimento_comp or pav_base
+        formato = "json" if args.json else "terminal"
+        gerar_desenho = not args.sem_desenho
+
+        res = orchestrator.registry.executar_ferramenta("comparar_geometrias_formas", {
+            "edificio_base": ed_base,
+            "pavimento_base": pav_base,
+            "edificio_comparado": ed_comp,
+            "pavimento_comparado": pav_comp,
+            "gerar_desenho_diff": gerar_desenho,
+            "caminho_saida_diff": args.desenho,
             "formato": formato
         })
 

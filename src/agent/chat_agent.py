@@ -340,6 +340,126 @@ class AutqsChatAgent:
                     "texto": f"❌ **Erro durante o processamento do edifício:**\n\n`{str(e)}`"
                 }
 
+        # 6.0. Comparação de Geometrias e Plantas de Formas (Case 07: Diff DWG)
+        pediu_comparacao = any(k in msg_norm for k in ["COMPAR", "DIFF", "ALTERA", "MUDOU", "DIFERENC", "SOBREPOSI"]) and any(k in msg_norm for k in ["GEOMETR", "FORMA", "PLANTA", "ARQUITETUR", "DESENHO", "PROJETO"])
+        if pediu_comparacao:
+            edificio_alvo = self.edificio_ativo or "054"
+            pav_match = re.search(r'(?:pavimento|piso)\s+([a-zA-Z0-9_\^]+(?:\s+[a-zA-Z0-9_\^]+)?)', msg_lower)
+            pav_alvo = pav_match.group(1).upper() if pav_match else None
+
+            try:
+                params = {"edificio_base": edificio_alvo}
+                if pav_alvo:
+                    params["pavimento_base"] = pav_alvo
+                else:
+                    params["modo"] = "edificio_geometrias"
+                res = self.orchestrator.registry.executar_ferramenta("comparar_geometrias_formas", params)
+                if res.get("sucesso") or res.get("status") == "sucesso":
+                    texto = res.get("resumo_executivo", "Auditoria de comparação concluída.")
+                    dxf = res.get("caminho_diff_dxf")
+                    return {
+                        "tipo": "comparacao_formas",
+                        "texto": texto,
+                        "arquivo_dwg": dxf,
+                        "dados": res.get("dados_completos"),
+                    }
+                else:
+                    return {
+                        "tipo": "erro",
+                        "texto": f"❌ **Falha na comparação de geometrias:** {res.get('erro', 'Erro desconhecido.')}"
+                    }
+            except Exception as e:
+                return {
+                    "tipo": "erro",
+                    "texto": f"❌ **Erro na comparação de geometrias:**\n\n`{str(e)}`"
+                }
+
+        # 6.01. Dimensionamento e Auditoria de Pilares (Case 04)
+        pediu_pilares = any(k in msg_norm for k in ["DIMENSION", "OTIMIZ", "AUDIT"]) and any(k in msg_norm for k in ["PILAR", "PILARES"])
+        if pediu_pilares:
+            edificio_alvo = self.edificio_ativo or "054"
+            p_match = re.search(r'\b[pP](\d+)\b', msg)
+            pilar_filtro = f"P{p_match.group(1)}" if p_match else None
+            try:
+                params = {"edificio_nome": edificio_alvo, "formato": "resumo"}
+                if pilar_filtro:
+                    params["pilar"] = pilar_filtro
+                res = self.orchestrator.registry.executar_ferramenta("analisar_pilares_edificio", params)
+                if res.get("sucesso") or res.get("status") == "sucesso":
+                    return {
+                        "tipo": "analise_pilares_avancada",
+                        "texto": res.get("resumo", "Auditoria de pilares concluída."),
+                        "dados": res.get("dados", {}),
+                    }
+                else:
+                    return {
+                        "tipo": "erro",
+                        "texto": f"❌ **Falha na auditoria de pilares:** {res.get('erro', 'Erro desconhecido.')}"
+                    }
+            except Exception as e:
+                return {
+                    "tipo": "erro",
+                    "texto": f"❌ **Erro na auditoria de pilares:**\n\n`{str(e)}`"
+                }
+
+        # 6.02. Verificação de Consistência da Planta de Formas (Case 05)
+        pediu_consistencia = any(k in msg_norm for k in ["CONSIST", "ERRO", "INCONFORM", "AUDIT"]) and any(k in msg_norm for k in ["FORMA", "PLANTA", "APOIO"])
+        if pediu_consistencia:
+            edificio_alvo = self.edificio_ativo or "054"
+            pav_match = re.search(r'(?:pavimento|piso)\s+([a-zA-Z0-9_\^]+(?:\s+[a-zA-Z0-9_\^]+)?)', msg_lower)
+            pav_alvo = pav_match.group(1).upper() if pav_match else None
+            try:
+                params = {"edificio_nome": edificio_alvo, "formato": "resumo"}
+                if pav_alvo:
+                    params["pavimento"] = pav_alvo
+                res = self.orchestrator.registry.executar_ferramenta("verificar_consistencia_planta", params)
+                if res.get("sucesso") or res.get("status") == "sucesso":
+                    return {
+                        "tipo": "consistencia_formas",
+                        "texto": res.get("resumo", "Auditoria de consistência concluída."),
+                        "dados": res.get("dados", {}),
+                    }
+                else:
+                    return {
+                        "tipo": "erro",
+                        "texto": f"❌ **Falha na verificação de consistência:** {res.get('erro', 'Erro desconhecido.')}"
+                    }
+            except Exception as e:
+                return {
+                    "tipo": "erro",
+                    "texto": f"❌ **Erro na verificação de consistência:**\n\n`{str(e)}`"
+                }
+
+        # 6.03. Análise de Esforços, Cortante e Bielas de Vigas (Case 06)
+        pediu_vigas = any(k in msg_norm for k in ["BIELA", "CORTANT", "ESFORC", "DIMENSION"]) and any(k in msg_norm for k in ["VIGA", "VIGAS"])
+        if pediu_vigas:
+            edificio_alvo = self.edificio_ativo or "054"
+            pav_match = re.search(r'(?:pavimento|piso)\s+([a-zA-Z0-9_\^]+(?:\s+[a-zA-Z0-9_\^]+)?)', msg_lower)
+            pav_alvo = pav_match.group(1).upper() if pav_match else "TERREO"
+            v_match = re.search(r'\b[vV](\d+)\b', msg)
+            viga_alvo = f"V{v_match.group(1)}" if v_match else None
+            try:
+                params = {"edificio_nome": edificio_alvo, "pavimento": pav_alvo, "formato": "resumo"}
+                if viga_alvo:
+                    params["viga"] = viga_alvo
+                res = self.orchestrator.registry.executar_ferramenta("analisar_vigas_pavimento", params)
+                if res.get("sucesso") or res.get("status") == "sucesso":
+                    return {
+                        "tipo": "analise_vigas",
+                        "texto": res.get("resumo", "Auditoria de vigas concluída."),
+                        "dados": res.get("dados", {}),
+                    }
+                else:
+                    return {
+                        "tipo": "erro",
+                        "texto": f"❌ **Falha na análise de vigas:** {res.get('erro', 'Erro desconhecido.')}"
+                    }
+            except Exception as e:
+                return {
+                    "tipo": "erro",
+                    "texto": f"❌ **Erro na análise de vigas:**\n\n`{str(e)}`"
+                }
+
         # 6. Solicitação de Geração de Planta de Formas de Alvenaria Estrutural
         pediu_formas_alvenaria = any(k in msg_norm for k in ["FORMA", "ALVENAR", "FIADA", "DESFIAD", "PRE_FOR", "MODULAC"]) and any(k in msg_norm for k in ["PLANTA", "DESENH", "GERAR", "EMITIR", "CRIAR", "FAZER", "TRANSFORM"])
         if pediu_formas_alvenaria:
