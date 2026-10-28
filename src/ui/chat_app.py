@@ -273,6 +273,38 @@ with st.expander("✨ 💡 **Capacidades do Modelo e Guia de Comandos** (Clique 
                 st.session_state.queued_prompt = "Quais são os pilares mais carregados?"
                 st.rerun()
 
+    with tab_cap7:
+        st.markdown("""
+        #### 🌐 Estabilidade Global (NBR 6118) e Auditoria de Lajes
+        - **Estabilidade Global:** Audita $\gamma_z$, $FAV_t$, $\alpha$ e drift de vento em ELS ($H/1700$ e $H_i/850$).
+        - **Auditoria de Lajes & Grelhas:** Detecta balanços não travados, bordos livres em concavidade e riscos de flecha excessiva.
+        """)
+        col_es1, col_es2 = st.columns(2)
+        with col_es1:
+            if st.button("🌐 'Auditar estabilidade global (GamaZ e Drift)'", key="btn_ex_estab", use_container_width=True):
+                st.session_state.queued_prompt = f"Auditar a estabilidade global e deslocamentos do edifício {edificio_selecionado}"
+                st.rerun()
+        with col_es2:
+            if st.button("📑 'Auditar lajes, grelhas e flechas'", key="btn_ex_lajes", use_container_width=True):
+                st.session_state.queued_prompt = f"Auditar lajes e grelha do edifício {edificio_selecionado}"
+                st.rerun()
+
+    with tab_cap8:
+        st.markdown("""
+        #### 📦 Quantitativos Globais e Memorial Descritivo Automático
+        - **Quantitativo Global:** Volume de concreto, fôrmas, consumo de aço, espessura média ($e_m$) e carbono ($kgCO_2$).
+        - **Memorial Descritivo:** Gera documentação técnica e justificativa de cálculo em Markdown e HTML pronta para impressão.
+        """)
+        col_qm1, col_qm2 = st.columns(2)
+        with col_qm1:
+            if st.button("📊 'Extrair quantitativo global de materiais'", key="btn_ex_quant", use_container_width=True):
+                st.session_state.queued_prompt = f"Extrair quantitativo de materiais do edifício {edificio_selecionado}"
+                st.rerun()
+        with col_qm2:
+            if st.button("📄 'Gerar memorial descritivo da obra'", key="btn_ex_memo", use_container_width=True):
+                st.session_state.queued_prompt = f"Gerar memorial descritivo do edifício {edificio_selecionado}"
+                st.rerun()
+
     with tab_cap6:
         st.markdown("""
         #### 🤖 Raciocínio de Engenharia e Consultoria Normativa (Google Gemini)
@@ -425,6 +457,17 @@ for msg in st.session_state.messages:
                     cols_show = [c for c in ["nome", "secao_cm", "x_m", "y_m"] if c in df_p.columns]
                     st.dataframe(df_p[cols_show], use_container_width=True)
 
+        # Se houver memorial gerado (.html / .md)
+        if "arquivo_html" in msg and msg["arquivo_html"] and os.path.exists(msg["arquivo_html"]):
+            with open(msg["arquivo_html"], "r", encoding="utf-8") as f_html:
+                st.download_button(
+                    label="📄 Baixar Memorial Descritivo em HTML (Pronto para PDF/Impressão)",
+                    data=f_html.read(),
+                    file_name=os.path.basename(msg["arquivo_html"]),
+                    mime="text/html",
+                    use_container_width=True,
+                )
+
         # Se houver arquivo DWG gerado
         if "arquivo_dwg" in msg and msg["arquivo_dwg"]:
             dwg_path = msg["arquivo_dwg"]
@@ -475,6 +518,8 @@ if prompt:
                 "dados": resposta.get("dados"),
                 "dados_porlid": resposta.get("dados_porlid"),
                 "arquivo_dwg": resposta.get("arquivo_dwg"),
+                "arquivo_md": resposta.get("arquivo_md"),
+                "arquivo_html": resposta.get("arquivo_html"),
             }
 
             st.session_state.messages.append(item_historico)

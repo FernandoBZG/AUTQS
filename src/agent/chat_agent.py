@@ -460,6 +460,136 @@ class AutqsChatAgent:
                     "texto": f"❌ **Erro na análise de vigas:**\n\n`{str(e)}`"
                 }
 
+        # 6.04. Estabilidade Global e ELS (Case 08: GamaZ, FAVt, Alfa e Deslocamentos de Vento)
+        pediu_estabilidade = any(k in msg_norm for k in ["ESTABILID", "GAMAZ", "GAMA_Z", "ALFA", "DRIFT"]) or (
+            any(k in msg_norm for k in ["DESLOCAMENT", "VENT"]) and any(k in msg_norm for k in ["TOPO", "INTERPISO", "ELS", "GLOBAL"])
+        )
+        if pediu_estabilidade:
+            edificio_alvo = self.edificio_ativo or "054"
+            try:
+                res = self.orchestrator.registry.executar_ferramenta("auditar_estabilidade_global", {"edificio_nome": edificio_alvo, "formato": "resumo"})
+                if res.get("sucesso") or res.get("status") == "sucesso":
+                    return {
+                        "tipo": "estabilidade_global",
+                        "texto": res.get("resumo_executivo", "Auditoria de estabilidade global concluída."),
+                        "dados": res.get("dados", {}),
+                    }
+                else:
+                    return {
+                        "tipo": "erro",
+                        "texto": f"❌ **Falha na auditoria de estabilidade:** {res.get('mensagem', 'Erro desconhecido.')}"
+                    }
+            except Exception as e:
+                return {
+                    "tipo": "erro",
+                    "texto": f"❌ **Erro na auditoria de estabilidade:**\n\n`{str(e)}`"
+                }
+
+        # 6.05. Auditoria de Lajes, Grelhas e Flechas (Case 09)
+        pediu_lajes = any(k in msg_norm for k in ["LAJE", "GRELH", "FLECH", "PUNCA"]) and any(k in msg_norm for k in ["AUDIT", "VERIFIC", "ANALIS", "ESBELTEZ", "MODEL"])
+        if pediu_lajes:
+            edificio_alvo = self.edificio_ativo or "054"
+            pav_match = re.search(r'(?:pavimento|piso)\s+([a-zA-Z0-9_\^]+(?:\s+[a-zA-Z0-9_\^]+)?)', msg_lower)
+            pav_alvo = pav_match.group(1).upper() if pav_match else None
+            try:
+                params = {"edificio_nome": edificio_alvo, "formato": "resumo"}
+                if pav_alvo:
+                    params["pavimento"] = pav_alvo
+                res = self.orchestrator.registry.executar_ferramenta("auditar_lajes_edificio", params)
+                if res.get("sucesso") or res.get("status") == "sucesso":
+                    return {
+                        "tipo": "auditoria_lajes",
+                        "texto": res.get("resumo_executivo", "Auditoria de lajes concluída."),
+                        "dados": res.get("dados", {}),
+                    }
+                else:
+                    return {
+                        "tipo": "erro",
+                        "texto": f"❌ **Falha na auditoria de lajes:** {res.get('mensagem', 'Erro desconhecido.')}"
+                    }
+            except Exception as e:
+                return {
+                    "tipo": "erro",
+                    "texto": f"❌ **Erro na auditoria de lajes:**\n\n`{str(e)}`"
+                }
+
+        # 6.06. Quantitativo Global de Materiais e Índices de Consumo (Case 10)
+        pediu_materiais = any(k in msg_norm for k in ["QUANTITATIV", "CONSUM", "MATERIA"]) or (
+            any(k in msg_norm for k in ["VOLUME", "TAXA"]) and any(k in msg_norm for k in ["CONCRET", "FORMA", "ACO", "CARBON"])
+        )
+        if pediu_materiais:
+            edificio_alvo = self.edificio_ativo or "054"
+            try:
+                res = self.orchestrator.registry.executar_ferramenta("extrair_quantitativo_materiais", {"edificio_nome": edificio_alvo, "formato": "resumo"})
+                if res.get("sucesso") or res.get("status") == "sucesso":
+                    return {
+                        "tipo": "quantitativo_materiais",
+                        "texto": res.get("resumo_executivo", "Quantitativo de materiais concluído."),
+                        "dados": res.get("dados", {}),
+                    }
+                else:
+                    return {
+                        "tipo": "erro",
+                        "texto": f"❌ **Falha no levantamento de materiais:** {res.get('mensagem', 'Erro desconhecido.')}"
+                    }
+            except Exception as e:
+                return {
+                    "tipo": "erro",
+                    "texto": f"❌ **Erro no levantamento de materiais:**\n\n`{str(e)}`"
+                }
+
+        # 6.07. Memorial Descritivo e Justificativo de Cálculo (Case 11)
+        pediu_memorial = any(k in msg_norm for k in ["MEMORIAL", "JUSTIFICATIV"]) or (
+            any(k in msg_norm for k in ["RELATORI", "DOCUMENT"]) and any(k in msg_norm for k in ["EXECUTIV", "CALCUL", "OBRA", "PROJET"])
+        )
+        if pediu_memorial:
+            edificio_alvo = self.edificio_ativo or "054"
+            try:
+                res = self.orchestrator.registry.executar_ferramenta("gerar_memorial_descritivo", {"edificio_nome": edificio_alvo})
+                if res.get("sucesso") or res.get("status") == "sucesso":
+                    return {
+                        "tipo": "memorial_descritivo",
+                        "texto": res.get("resumo_executivo", "Memorial descritivo gerado com sucesso."),
+                        "arquivo_md": res.get("arquivo_md"),
+                        "arquivo_html": res.get("arquivo_html"),
+                    }
+                else:
+                    return {
+                        "tipo": "erro",
+                        "texto": f"❌ **Falha ao gerar memorial:** {res.get('mensagem', 'Erro desconhecido.')}"
+                    }
+            except Exception as e:
+                return {
+                    "tipo": "erro",
+                    "texto": f"❌ **Erro ao gerar memorial:**\n\n`{str(e)}`"
+                }
+
+        # 6.08. Limpeza e Padronização de Arquitetura CAD (Case 12)
+        pediu_limpeza = any(k in msg_norm for k in ["LIMPEZA", "PADRONIZ", "HIGIENIZ"]) and any(k in msg_norm for k in ["ARQUITETUR", "DWG", "DXF", "GEO_"])
+        if pediu_limpeza:
+            m_arq = re.search(r'["\']?([a-zA-Z0-9_\-/\\]+\.(?:dwg|dxf))["\']?', msg, re.IGNORECASE)
+            caminho_arq = m_arq.group(1) if m_arq else None
+            if caminho_arq:
+                try:
+                    res = self.orchestrator.registry.executar_ferramenta("padronizar_arquitetura_tqs", {"caminho_arquivo": caminho_arq})
+                    if res.get("sucesso") or res.get("status") == "sucesso":
+                        return {
+                            "tipo": "padronizacao_arquitetura",
+                            "texto": res.get("resumo_executivo", "Padronização de arquitetura concluída."),
+                            "arquivo_dwg": res.get("arquivo_gerado"),
+                            "dados": res.get("dados", {}),
+                        }
+                    else:
+                        return {
+                            "tipo": "erro",
+                            "texto": f"❌ **Falha na padronização da arquitetura:** {res.get('mensagem', 'Erro desconhecido.')}"
+                        }
+                except Exception as e:
+                    return {
+                        "tipo": "erro",
+                        "texto": f"❌ **Erro na padronização da arquitetura:**\n\n`{str(e)}`"
+                    }
+
         # 6. Solicitação de Geração de Planta de Formas de Alvenaria Estrutural
         pediu_formas_alvenaria = any(k in msg_norm for k in ["FORMA", "ALVENAR", "FIADA", "DESFIAD", "PRE_FOR", "MODULAC"]) and any(k in msg_norm for k in ["PLANTA", "DESENH", "GERAR", "EMITIR", "CRIAR", "FAZER", "TRANSFORM"])
         if pediu_formas_alvenaria:

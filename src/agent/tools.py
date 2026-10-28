@@ -6,6 +6,11 @@ from src.skills.case_04_otimizacao_pilares.skill import OtimizacaoPilaresSkill
 from src.skills.case_05_consistencia_planta.skill import ConsistenciaPlantaSkill
 from src.skills.case_06_analise_vigas.skill import AnaliseVigasSkill
 from src.skills.case_07_comparacao_formas.skill import ComparacaoFormasSkill
+from src.skills.case_08_estabilidade_global.skill import EstabilidadeGlobalSkill
+from src.skills.case_09_auditoria_lajes.skill import AuditoriaLajesSkill
+from src.skills.case_10_quantitativo_materiais.skill import QuantitativoMateriaisSkill
+from src.skills.case_11_memorial_calculo.skill import MemorialCalculoSkill
+from src.skills.case_12_limpeza_arquitetura.skill import LimpezaArquiteturaSkill
 from src.tqs_adapter.model_editor import TQSModelEditor
 
 class ToolsRegistry:
@@ -24,6 +29,11 @@ class ToolsRegistry:
         self.registrar_skill(ConsistenciaPlantaSkill())
         self.registrar_skill(AnaliseVigasSkill())
         self.registrar_skill(ComparacaoFormasSkill())
+        self.registrar_skill(EstabilidadeGlobalSkill())
+        self.registrar_skill(AuditoriaLajesSkill())
+        self.registrar_skill(QuantitativoMateriaisSkill())
+        self.registrar_skill(MemorialCalculoSkill())
+        self.registrar_skill(LimpezaArquiteturaSkill())
 
     def registrar_skill(self, skill):
         self._skills[skill.nome] = skill
@@ -234,6 +244,130 @@ class ToolsRegistry:
                             }
                         },
                         "required": ["edificio_base", "pavimento_base"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "auditar_estabilidade_global",
+                    "description": self._skills["auditar_estabilidade_global"].descricao,
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "edificio_nome": {
+                                "type": "string",
+                                "description": "Nome ou código do edifício TQS (ex: '054')."
+                            },
+                            "formato": {
+                                "type": "string",
+                                "enum": ["resumo", "json"],
+                                "description": "Formato de saída: 'resumo' ou 'json'."
+                            }
+                        },
+                        "required": ["edificio_nome"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "auditar_lajes_edificio",
+                    "description": self._skills["auditar_lajes_edificio"].descricao,
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "edificio_nome": {
+                                "type": "string",
+                                "description": "Nome ou código do edifício TQS (ex: '054')."
+                            },
+                            "pavimento": {
+                                "type": "string",
+                                "description": "Opcional: nome ou filtro do pavimento (ex: '2', 'tipo', 'terreo')."
+                            },
+                            "formato": {
+                                "type": "string",
+                                "enum": ["resumo", "json"],
+                                "description": "Formato de saída: 'resumo' ou 'json'."
+                            }
+                        },
+                        "required": ["edificio_nome"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "extrair_quantitativo_materiais",
+                    "description": self._skills["extrair_quantitativo_materiais"].descricao,
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "edificio_nome": {
+                                "type": "string",
+                                "description": "Nome ou código do edifício TQS (ex: '054')."
+                            },
+                            "formato": {
+                                "type": "string",
+                                "enum": ["resumo", "json"],
+                                "description": "Formato de saída: 'resumo' ou 'json'."
+                            }
+                        },
+                        "required": ["edificio_nome"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "gerar_memorial_descritivo",
+                    "description": self._skills["gerar_memorial_descritivo"].descricao,
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "edificio_nome": {
+                                "type": "string",
+                                "description": "Nome ou código do edifício TQS (ex: '054')."
+                            },
+                            "caminho_saida_md": {
+                                "type": "string",
+                                "description": "Opcional caminho de arquivo para salvar o memorial em Markdown."
+                            },
+                            "caminho_saida_html": {
+                                "type": "string",
+                                "description": "Opcional caminho de arquivo para salvar o memorial em HTML imprimível."
+                            }
+                        },
+                        "required": ["edificio_nome"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "padronizar_arquitetura_tqs",
+                    "description": self._skills["padronizar_arquitetura_tqs"].descricao,
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "caminho_arquivo": {
+                                "type": "string",
+                                "description": "Caminho do arquivo CAD/DXF de arquitetura a ser higienizado."
+                            },
+                            "caminho_saida": {
+                                "type": "string",
+                                "description": "Opcional: caminho do arquivo DXF limpo de saída (ex: Geo_PAV.dxf)."
+                            },
+                            "fator_escala": {
+                                "type": "string",
+                                "description": "'auto' para converter metros para cm, ou '100'/'1'."
+                            },
+                            "centralizar_origem": {
+                                "type": "boolean",
+                                "description": "Se verdadeiro, translada a geometria para (0, 0)."
+                            }
+                        },
+                        "required": ["caminho_arquivo"]
                     }
                 }
             }

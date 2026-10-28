@@ -148,9 +148,81 @@ def main():
     parser.add_argument("--pavimento-comp", type=str, default=None, help="Nome do pavimento comparado no edifício comparado")
     parser.add_argument("--sem-desenho", action="store_true", help="Não gera o desenho DXF de sobreposição gráfica comparativa")
     parser.add_argument("--sim", "-y", "--yes", action="store_true", help="Aprova automaticamente qualquer modificação no modelo estrutural sem solicitar confirmação interativa")
+    parser.add_argument("--estabilidade", "-eg", action="store_true", help="Audita a estabilidade global (GamaZ, FAVt, Alfa) e deslocamentos de vento em ELS conforme a NBR 6118")
+    parser.add_argument("--auditar-lajes", "--lajes-audit", "-al", action="store_true", help="Audita lajes, grelhas, balanços e riscos de flechas excessivas no edifício")
+    parser.add_argument("--quantitativos", "-qm", action="store_true", help="Extrai o quantitativo global de materiais (concreto, formas, aço) e pegada de carbono")
+    parser.add_argument("--memorial", action="store_true", help="Gera o Memorial Descritivo e Justificativo de Cálculo Estrutural em Markdown e HTML")
+    parser.add_argument("--limpar-arq", action="store_true", help="Higieniza e padroniza DWG/DXF de arquitetura para referência externa Geo_*.DWG")
+    parser.add_argument("--arquivo-arq", type=str, default=None, help="Caminho do arquivo CAD de arquitetura a ser higienizado")
 
     args = parser.parse_args()
     orchestrator = AutqsAgentOrchestrator()
+
+    # 1. Auditoria de Estabilidade Global (Case 08)
+    if args.estabilidade:
+        ed = args.edificio or "054"
+        res = orchestrator.registry.executar_ferramenta("auditar_estabilidade_global", {"edificio_nome": ed, "formato": "resumo"})
+        if res.get("sucesso") or res.get("status") == "sucesso":
+            print(res.get("resumo_executivo"))
+        else:
+            print(f"[ERRO] {res.get('mensagem', 'Falha ao auditar estabilidade.')}")
+        return
+
+    # 2. Auditoria de Lajes e Grelhas (Case 09)
+    if args.auditar_lajes:
+        ed = args.edificio or "054"
+        params = {"edificio_nome": ed, "formato": "resumo"}
+        if args.pavimento:
+            params["pavimento"] = args.pavimento
+        res = orchestrator.registry.executar_ferramenta("auditar_lajes_edificio", params)
+        if res.get("sucesso") or res.get("status") == "sucesso":
+            print(res.get("resumo_executivo"))
+        else:
+            print(f"[ERRO] {res.get('mensagem', 'Falha ao auditar lajes.')}")
+        return
+
+    # 3. Quantitativo Global de Materiais e Índices de Consumo (Case 10)
+    if args.quantitativos:
+        ed = args.edificio or "054"
+        res = orchestrator.registry.executar_ferramenta("extrair_quantitativo_materiais", {"edificio_nome": ed, "formato": "resumo"})
+        if res.get("sucesso") or res.get("status") == "sucesso":
+            print(res.get("resumo_executivo"))
+        else:
+            print(f"[ERRO] {res.get('mensagem', 'Falha ao extrair quantitativos.')}")
+        return
+
+    # 4. Memorial Descritivo e Justificativo de Cálculo (Case 11)
+    if args.memorial:
+        ed = args.edificio or "054"
+        p_md = f"memorial_{ed}.md"
+        p_html = f"memorial_{ed}.html"
+        res = orchestrator.registry.executar_ferramenta("gerar_memorial_descritivo", {
+            "edificio_nome": ed,
+            "caminho_saida_md": p_md,
+            "caminho_saida_html": p_html
+        })
+        if res.get("sucesso") or res.get("status") == "sucesso":
+            print(res.get("resumo_executivo"))
+            print(f"\n[OK] Arquivos salvos com sucesso:")
+            print(f"     - Markdown: {os.path.abspath(p_md)}")
+            print(f"     - HTML:     {os.path.abspath(p_html)}")
+        else:
+            print(f"[ERRO] {res.get('mensagem', 'Falha ao gerar memorial.')}")
+        return
+
+    # 5. Limpeza e Padronização de Arquitetura CAD (Case 12)
+    if args.limpar_arq:
+        caminho_in = args.arquivo_arq or args.desenho
+        if not caminho_in:
+            print("[ERRO] Informe o arquivo de arquitetura com --arquivo-arq <caminho.dxf>")
+            return
+        res = orchestrator.registry.executar_ferramenta("padronizar_arquitetura_tqs", {"caminho_arquivo": caminho_in})
+        if res.get("sucesso") or res.get("status") == "sucesso":
+            print(res.get("resumo_executivo"))
+            print(f"\n[OK] Desenho limpo gerado: {res.get('arquivo_gerado')}")
+        else:
+            print(f"[ERRO] {res.get('mensagem', 'Falha ao limpar arquitetura.')}")
+        return
 
     # Chat Interativo no Terminal
     if args.chat:

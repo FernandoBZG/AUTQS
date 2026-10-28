@@ -34,6 +34,7 @@ class AutqsAgentOrchestrator:
         Executa diretamente uma intenção mapeada ou despacha a tool adequada
         com extração inteligente de parâmetros em linguagem natural.
         """
+        params = dict(params or {})
         from src.tqs_adapter.building_reader import TQSBuildingReader
 
         from src.tqs_adapter.model_editor import normalizar_texto
@@ -68,7 +69,7 @@ class AutqsAgentOrchestrator:
 
         # 3. Processamento Estrutural do Edifício (Pórtico Espacial ou Global)
         # Ex: "processe o edifício 051", "calcular pórtico espacial", "rodar processamento global"
-        if any(k in cmd_norm for k in ["PROCESS", "CALCUL", "ROD", "EXECUT", "PORTIC", "RECALCUL"]) and any(k in cmd_norm for k in ["EDIFIC", "OBRA", "PROJET", "PORTIC", "ESTRUTUR", "MODEL"]):
+        if not any(k in cmd_norm for k in ["MEMORIAL", "RELATORI", "JUSTIFICATIV"]) and any(k in cmd_norm for k in ["PROCESS", "CALCUL", "ROD", "EXECUT", "PORTIC", "RECALCUL"]) and any(k in cmd_norm for k in ["EDIFIC", "OBRA", "PROJET", "PORTIC", "ESTRUTUR", "MODEL"]):
             if "global" in cmd_lower or "completo" in cmd_lower or "armadur" in cmd_lower:
                 params["tipo_processamento"] = "global"
             else:
@@ -133,6 +134,45 @@ class AutqsAgentOrchestrator:
                     params["pavimento"] = pav_match.group(1)
             params["formato"] = "resumo"
             return self.registry.executar_ferramenta("verificar_consistencia_planta", params)
+
+        # 6.9. Estabilidade Global e ELS (GamaZ, FAVt, Alfa e Deslocamentos de Vento)
+        if any(k in cmd_norm for k in ["ESTABILID", "GAMAZ", "GAMA_Z", "ALFA", "DRIFT"]) or (
+            any(k in cmd_norm for k in ["DESLOCAMENT", "VENT"]) and any(k in cmd_norm for k in ["TOPO", "INTERPISO", "ELS", "GLOBAL"])
+        ):
+            params["formato"] = "resumo"
+            return self.registry.executar_ferramenta("auditar_estabilidade_global", params)
+
+        # 6.10. Auditoria de Lajes, Grelha e Flechas
+        if any(k in cmd_norm for k in ["LAJE", "GRELH", "FLECH", "PUNCA"]) and any(k in cmd_norm for k in ["AUDIT", "VERIFIC", "ANALIS", "ESBELTEZ", "MODEL"]):
+            if "pavimento" not in params:
+                pav_match = re.search(r'(?:no|do|pavimento|piso)\s+([a-zA-Z0-9_\^]+(?:\s+[a-zA-Z0-9_\^]+)?)', cmd_lower)
+                if pav_match:
+                    params["pavimento"] = pav_match.group(1)
+            params["formato"] = "resumo"
+            return self.registry.executar_ferramenta("auditar_lajes_edificio", params)
+
+        # 6.11. Quantitativo Global de Materiais e Índices de Consumo
+        if any(k in cmd_norm for k in ["QUANTITATIV", "CONSUM", "MATERIA"]) or (
+            any(k in cmd_norm for k in ["VOLUME", "TAXA"]) and any(k in cmd_norm for k in ["CONCRET", "FORMA", "ACO", "CARBON"])
+        ):
+            params["formato"] = "resumo"
+            return self.registry.executar_ferramenta("extrair_quantitativo_materiais", params)
+
+        # 6.12. Memorial Descritivo e de Cálculo Estrutural
+        if any(k in cmd_norm for k in ["MEMORIAL", "JUSTIFICATIV"]) or (
+            any(k in cmd_norm for k in ["RELATORI", "DOCUMENT"]) and any(k in cmd_norm for k in ["EXECUTIV", "CALCUL", "OBRA", "PROJET"])
+        ):
+            return self.registry.executar_ferramenta("gerar_memorial_descritivo", params)
+
+        # 6.13. Limpeza e Padronização de Arquitetura CAD (Geo_*.DWG)
+        if any(k in cmd_norm for k in ["LIMPEZA", "PADRONIZ", "HIGIENIZ"]) and any(k in cmd_norm for k in ["ARQUITETUR", "DWG", "DXF", "GEO_"]):
+            if "caminho_arquivo" not in params:
+                # busca caminho de arquivo no comando
+                m_arq = re.search(r'["\']?([a-zA-Z0-9_\-/\\]+\.(?:dwg|dxf))["\']?', comando, re.IGNORECASE)
+                if m_arq:
+                    params["caminho_arquivo"] = m_arq.group(1)
+            if "caminho_arquivo" in params:
+                return self.registry.executar_ferramenta("padronizar_arquitetura_tqs", params)
 
         # 8. Geração de Planta de Formas de Alvenaria Estrutural (1ª Fiada)
         if any(k in cmd_norm for k in ["FORMA", "ALVENAR", "FIADA", "DESFIAD", "PRE_FOR", "MODULAC"]):
