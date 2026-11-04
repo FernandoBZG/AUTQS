@@ -137,7 +137,9 @@ class AlvenariaDwgBuilder:
         bounds_planta = self._calcular_bounds_desfiad(p_desfiad)
 
         # 3. Pré-carregar elementos técnicos da prancha de referência
-        elementos_referencia = self._precarregar_elementos_referencia(pasta_pav, pasta_gerais, bounds_planta)
+        elementos_referencia = self._precarregar_elementos_referencia(
+            pasta_pav, pasta_gerais, bounds_planta, caminho_saida_dwg=caminho_saida_dwg
+        )
 
         # 4. Inicializa o arquivo de saída como cópia de DesFiad1
         try:
@@ -256,22 +258,10 @@ class AlvenariaDwgBuilder:
                 else:
                     dwg.draw.Line(item["x1"], item["y1"], item["x2"], item["y2"])
 
-        # Para COBERTURA: sobrepõe também as linhas de perímetro de laje do LAJ0289 nativo se existirem
-        if "COBERTURA" in pavimento.upper() and p_laj and os.path.exists(p_laj):
-            dwg_laj_cob = TQSDwg.Dwg(pedmv=0)
-            if dwg_laj_cob.file.Open(p_laj) == 0:
-                it_lc = dwg_laj_cob.iterator
-                it_lc.Begin()
-                while True:
-                    pos = it_lc.GetElementReadPosition()
-                    if pos and it_lc.level == 0 and it_lc.elementName in ["Linha", "Polyline", "Indefinido"]:
-                        if not (it_lc.x1 == 0 and it_lc.y1 == 0 and it_lc.x2 == 0 and it_lc.y2 == 0):
-                            dwg.draw.level = 237
-                            dwg.draw.color = 6
-                            dwg.draw.Line(it_lc.x1, it_lc.y1, it_lc.x2, it_lc.y2)
-                    if not it_lc.Next():
-                        break
-                dwg_laj_cob.file.Close()
+                # c) SHAFTS / FUROS DE LAJE: Desenho de 'X' nos shafts retangulares indicando que é um buraco (vazio na laje)
+        total_shafts = self._desenhar_shafts_com_x(
+            dwg, pasta_pav, caminho_edificio, bounds_planta, caminho_saida_dwg=caminho_saida_dwg
+        )
 
         # 7. REGRA 4: Anotação de Dimensões de Vãos (Portas no centro, Janelas fora da parede)
         # Sempre gerado a partir dos vãos mapeados no pavimento corrente
@@ -300,7 +290,7 @@ class AlvenariaDwgBuilder:
         dwg.draw.Text(x_titulo + 4.4, y_titulo - 24.6, 12.0, 0.0, f"ESCALA: 1:{escala}")
 
         # 10. Inserção de Resumo de Materiais, Legendas e Notas Técnicas na Coluna Lateral
-        self._inserir_coluna_lateral(dwg, elementos_referencia.get("laterais", []))
+        self._inserir_coluna_lateral(dwg, elementos_referencia.get("laterais", []), bounds_planta=bounds_planta)
 
         # 11. REGRA 2: Carregar e Inserir o Corte Esquemático da pasta GERAIS como Bloco
         bloco_corte_inserido = False
@@ -321,11 +311,23 @@ class AlvenariaDwgBuilder:
         dwg.file.Save()
         dwg.file.Close()
 
-        p_alias = os.path.join(pasta_pav, "PRE_FOR_1aFIADA_2oPAV.DWG")
+        # Gera alias generico PRE_FOR_1aFIADA.DWG
+        p_alias_gen = os.path.join(pasta_pav, "PRE_FOR_1aFIADA.DWG")
         try:
-            shutil.copy2(caminho_saida_dwg, p_alias)
+            shutil.copy2(caminho_saida_dwg, p_alias_gen)
         except Exception:
             pass
+
+        # Gera alias numerico correspondente ao pavimento (ex: PRE_FOR_1aFIADA_2oPAV.DWG, PRE_FOR_1aFIADA_16oPAV.DWG)
+        digits = re.findall(r"\d+", pavimento)
+        p_alias = p_alias_gen
+        if digits:
+            p_alias_num = os.path.join(pasta_pav, f"PRE_FOR_1aFIADA_{digits[0]}oPAV.DWG")
+            try:
+                shutil.copy2(caminho_saida_dwg, p_alias_num)
+                p_alias = p_alias_num
+            except Exception:
+                pass
 
         elementos_finais = self._auditar_dwg(caminho_saida_dwg)
 
@@ -342,6 +344,8 @@ class AlvenariaDwgBuilder:
             "elementos_purgados": len(posicoes_para_apagar),
             "total_lajes": total_lajes,
             "total_vaos": vaos_inseridos,
+            "total_shafts": total_shafts,
+            "total_lajes_externas": len(lajes_ext),
             "auditoria": elementos_finais,
         }
 
@@ -831,15 +835,235 @@ class AlvenariaDwgBuilder:
             bounds = [-1200.0, 2250.0, -1600.0, 100.0]
         return bounds
 
+    def _extrair_shafts_de_dwg(self, caminho_dwg: str, bounds_planta: List[float]) -> List[Dict[str, float]]:
+        """
+        Extrai shafts retangulares a partir de pares de diagonais cruzadas no Nível 237 (Cor 6) em um DWG de referência.
+        """
+        if not os.path.exists(caminho_dwg):
+            return []
+        dwg_ref = TQSDwg.Dwg(pedmv=0)
+        if dwg_ref.file.Open(caminho_dwg) != 0:
+            return []
+
+        it = dwg_ref.iterator
+        it.Begin()
+        diags = []
+        bx_min, bx_max, by_min, by_max = bounds_planta
+        margem = 50.0
+
+        while True:
+            pos = it.GetElementReadPosition()
+            if pos and it.level == 237 and it.elementName in ["Linha", "Polyline"]:
+                dx = abs(it.x2 - it.x1)
+                dy = abs(it.y2 - it.y1)
+                if dx > 10.0 and dy > 10.0:
+                    x_med = (it.x1 + it.x2) / 2.0
+                    y_med = (it.y1 + it.y2) / 2.0
+                    if bx_min - margem <= x_med <= bx_max + margem and by_min - margem <= y_med <= by_max + margem:
+                        diags.append((it.x1, it.y1, it.x2, it.y2))
+            if not it.Next():
+                break
+        dwg_ref.file.Close()
+
+        shafts = []
+        used = set()
+        tol = 5.0
+        for i, l1 in enumerate(diags):
+            if i in used:
+                continue
+            x1a, y1a, x2a, y2a = l1
+            min_xa, max_xa = min(x1a, x2a), max(x1a, x2a)
+            min_ya, max_ya = min(y1a, y2a), max(y1a, y2a)
+            for j in range(i + 1, len(diags)):
+                if j in used:
+                    continue
+                x1b, y1b, x2b, y2b = diags[j]
+                min_xb, max_xb = min(x1b, x2b), max(x1b, x2b)
+                min_yb, max_yb = min(y1b, y2b), max(y1b, y2b)
+                if (abs(min_xa - min_xb) <= tol and abs(max_xa - max_xb) <= tol and
+                    abs(min_ya - min_yb) <= tol and abs(max_ya - max_yb) <= tol):
+                    used.add(i)
+                    used.add(j)
+                    shafts.append({
+                        "x_min": min(min_xa, min_xb),
+                        "x_max": max(max_xa, max_xb),
+                        "y_min": min(min_ya, min_yb),
+                        "y_max": max(max_ya, max_yb),
+                        "w": max(max_xa, max_xb) - min(min_xa, min_xb),
+                        "h": max(max_ya, max_yb) - min(min_ya, min_yb),
+                    })
+                    break
+        return shafts
+
+    def _detectar_shafts_de_linhas_237(
+        self, linhas_existentes: set, bounds_planta: List[float]
+    ) -> List[Dict[str, float]]:
+        """
+        Detecta caixas retangulares fechadas ou quase fechadas de shafts a partir
+        de segmentos ortogonais no Nível 237 quando nenhuma referência com diagonais existe.
+        """
+        horiz = []
+        vert = []
+        for x1, y1, x2, y2 in linhas_existentes:
+            if abs(y1 - y2) <= 1.0 and abs(x2 - x1) >= 10.0:
+                horiz.append((min(x1, x2), max(x1, x2), (y1 + y2) / 2.0))
+            elif abs(x1 - x2) <= 1.0 and abs(y2 - y1) >= 10.0:
+                vert.append(((x1 + x2) / 2.0, min(y1, y2), max(y1, y2)))
+
+        rects = []
+        tol = 3.0
+        for i, h1 in enumerate(horiz):
+            for j in range(i + 1, len(horiz)):
+                h2 = horiz[j]
+                if abs(h1[0] - h2[0]) <= tol and abs(h1[1] - h2[1]) <= tol:
+                    w = max(h1[1], h2[1]) - min(h1[0], h2[0])
+                    h = abs(h1[2] - h2[2])
+                    if 10.0 <= w <= 250.0 and 10.0 <= h <= 250.0 and (w * h) <= 15000.0:
+                        rects.append({
+                            "x_min": min(h1[0], h2[0]),
+                            "x_max": max(h1[1], h2[1]),
+                            "y_min": min(h1[2], h2[2]),
+                            "y_max": max(h1[2], h2[2]),
+                            "w": w,
+                            "h": h,
+                        })
+        return rects
+
+    def _desenhar_shafts_com_x(
+        self,
+        dwg: TQSDwg.Dwg,
+        pasta_pav: str,
+        caminho_edificio: str,
+        bounds_planta: List[float],
+        caminho_saida_dwg: Optional[str] = None,
+    ) -> int:
+        """
+        Identifica todos os shafts retangulares (furos / vazios na laje) do pavimento e
+        desenha duas linhas diagonais cruzadas formando um 'X' entre vértices opostos,
+        além de garantir o contorno retangular completo do shaft no Nível 237 (Cor 6 - ciano/magenta),
+        indicando inequivocamente que é um buraco/abertura na laje conforme convenção executiva do TQS.
+        """
+        def normalizar_segmento(p1, p2):
+            if (p1[0], p1[1]) <= (p2[0], p2[1]):
+                return (round(p1[0], 1), round(p1[1], 1), round(p2[0], 1), round(p2[1], 1))
+            else:
+                return (round(p2[0], 1), round(p2[1], 1), round(p1[0], 1), round(p1[1], 1))
+
+        linhas_existentes = set()
+        it = dwg.iterator
+        it.Begin()
+        while True:
+            pos = it.GetElementReadPosition()
+            if pos and it.level == 237 and it.elementName in ["Linha", "Polyline"]:
+                linhas_existentes.add(normalizar_segmento((it.x1, it.y1), (it.x2, it.y2)))
+            if not it.Next():
+                break
+
+        # Busca candidatos no edifício
+        candidatos_dwg = []
+        if os.path.exists(pasta_pav):
+            for f in os.listdir(pasta_pav):
+                f_upper = f.upper()
+                if f_upper.endswith(".DWG") and not any(ign in f_upper for ign in [".BAK", "TEST", "TEMP", "NOVO", "BKP", "AUTO"]):
+                    # Regra 6: Ignora saidas geradas automaticamente para evitar reimportacao de shafts
+                    if f_upper.startswith("PRE_FOR_1AFIADA") and not any(rev in f_upper for rev in ["-R", "_R", "REV"]):
+                        continue
+                    p_c = os.path.join(pasta_pav, f)
+                    if not caminho_saida_dwg or os.path.abspath(p_c) != os.path.abspath(caminho_saida_dwg):
+                        candidatos_dwg.append(p_c)
+
+        # Regra Anti-Conflito: pavimentos diferenciados (não-tipo) jamais devem importar shafts de Tipo!
+        is_tipo = "TIPO" in os.path.basename(pasta_pav).upper()
+        if is_tipo:
+            for root, dirs, files in os.walk(caminho_edificio):
+                if any(ign in root.upper() for ign in ["ESPACIAL", "FUNDAC", "INFRA", "PILAR", "PREMOLD"]):
+                    continue
+                for f in files:
+                    if f.upper().endswith(".DWG") and any(k in f.upper() for k in ["PRE_FOR", "TIPO"]):
+                        if not any(ign in f.upper() for ign in [".BAK", "TEST", "TEMP", "NOVO"]):
+                            p_c = os.path.join(root, f)
+                            if p_c not in candidatos_dwg:
+                                if not caminho_saida_dwg or os.path.abspath(p_c) != os.path.abspath(caminho_saida_dwg):
+                                    candidatos_dwg.append(p_c)
+
+        candidatos_dwg.sort(key=lambda p: (
+            0 if "PRE_FOR_1AFIADA_TIPO" in p.upper().replace(" ", "").replace("-", "_") else
+            1 if "TIPO" in os.path.basename(p).upper() else
+            2 if "PRE_FOR" in os.path.basename(p).upper() else 3
+        ))
+
+        melhor_shafts = []
+        for p_dwg in candidatos_dwg:
+            if not os.path.exists(p_dwg):
+                continue
+            shafts_extraidos = self._extrair_shafts_de_dwg(p_dwg, bounds_planta)
+            if len(shafts_extraidos) > len(melhor_shafts):
+                melhor_shafts = shafts_extraidos
+                if len(melhor_shafts) >= 20:
+                    break
+
+        if not melhor_shafts:
+            melhor_shafts = self._detectar_shafts_de_linhas_237(linhas_existentes, bounds_planta)
+
+        def _linha_ja_existe(p1, p2, tol=1.5):
+            s = normalizar_segmento(p1, p2)
+            for e in linhas_existentes:
+                if (abs(s[0] - e[0]) <= tol and abs(s[1] - e[1]) <= tol and
+                    abs(s[2] - e[2]) <= tol and abs(s[3] - e[3]) <= tol):
+                    return True
+            return False
+
+        def _adicionar_linha(p1, p2):
+            dwg.draw.level = 237
+            dwg.draw.color = 6
+            dwg.draw.Line(p1[0], p1[1], p2[0], p2[1])
+            linhas_existentes.add(normalizar_segmento(p1, p2))
+
+        shafts_processados = 0
+        for s in melhor_shafts:
+            x_min, x_max = s["x_min"], s["x_max"]
+            y_min, y_max = s["y_min"], s["y_max"]
+
+            # 1. Diagonal 1 (canto inferior-esquerdo para superior-direito)
+            if not _linha_ja_existe((x_min, y_min), (x_max, y_max)):
+                _adicionar_linha((x_min, y_min), (x_max, y_max))
+
+            # 2. Diagonal 2 (canto superior-esquerdo para inferior-direito)
+            if not _linha_ja_existe((x_min, y_max), (x_max, y_min)):
+                _adicionar_linha((x_min, y_max), (x_max, y_min))
+
+            # 3. Bordas ortogonais do retângulo do shaft (para garantir que o buraco está perfeitamente delimitado)
+            bordas = [
+                ((x_min, y_min), (x_max, y_min)),
+                ((x_min, y_max), (x_max, y_max)),
+                ((x_min, y_min), (x_min, y_max)),
+                ((x_max, y_min), (x_max, y_max)),
+            ]
+            for pt_a, pt_b in bordas:
+                if not _linha_ja_existe(pt_a, pt_b):
+                    _adicionar_linha(pt_a, pt_b)
+
+            shafts_processados += 1
+
+        return shafts_processados
+
     def _precarregar_elementos_referencia(
-        self, pasta_pav: str, pasta_gerais: str, bounds_planta: Optional[List[float]] = None
+        self,
+        pasta_pav: str,
+        pasta_gerais: str,
+        bounds_planta: Optional[List[float]] = None,
+        caminho_saida_dwg: Optional[str] = None,
     ) -> Dict[str, List[Dict[str, Any]]]:
         """
         Pre-carrega elementos da prancha de referencia homologada:
-        1) Coluna tecnica lateral (Resumo de materiais, legendas de blocos, notas
-           tecnicas e detalhes) a direita da planta util.
-        2) Contornos e bordas das lajes exteriores e sacadas (Niveis 231 e 237)
+        1) Contornos e bordas das lajes exteriores e sacadas (Nivel 237)
            no perimetro da planta util.
+           REGRA DE OURO: Para pavimentos diferenciados (ex: 2º Pavimento), utiliza estritamente
+           a geometria nativa do pavimento ({pavimento}.DWG) e JAMAIS carrega de pavimentos Tipo.
+           Apenas para pavimentos Tipo ('TIPO' no nome) permite buscar referencias Tipo.
+           Garante que as lajes venham de um unico arquivo consistente, sem duplicar ou misturar linhas.
+        2) Coluna tecnica lateral (Resumo de materiais, legendas de blocos, notas
+           tecnicas e detalhes) a direita da planta util a partir de uma fonte consistente.
         Retorna dicionario com {'laterais': [...], 'lajes_externas': [...]}.
         """
         if bounds_planta is None:
@@ -854,131 +1078,159 @@ class AlvenariaDwgBuilder:
         elementos_laterais = []
         elementos_lajes_externas = []
         pasta_edificio = os.path.dirname(pasta_pav)
+        pavimento_nome = os.path.basename(pasta_pav)
 
-        candidatos = [
+        # -------------------------------------------------------------------------
+        # 1. CONTORNOS E BORDAS DE LAJES EXTERNAS E SACADAS (NIVEL 237)
+        # -------------------------------------------------------------------------
+        candidatos_lajes = []
+
+        # a) Desenho nativo do proprio pavimento (ex: 2^ PAVIMENTO.DWG, TIPO A.DWG)
+        p_pav_nativo = os.path.join(pasta_pav, f"{pavimento_nome}.DWG")
+        if os.path.exists(p_pav_nativo):
+            candidatos_lajes.append(p_pav_nativo)
+        else:
+            for f in os.listdir(pasta_pav):
+                if f.upper().endswith(".DWG") and not any(f.upper().startswith(k) for k in ["DES", "PRE", "FOR", "LAJ", "LIST", "TEL", "AUTO"]):
+                    candidatos_lajes.append(os.path.join(pasta_pav, f))
+                    break
+
+        # b) Desenhos especificos de pre-forma ja homologados deste pavimento
+        for cand_name in [f"PRE_FOR_1aFIADA_{pavimento_nome}.DWG", f"EP - PRE_FOR_1aFIADA_{pavimento_nome}.DWG"]:
+            p_cand = os.path.join(pasta_pav, cand_name)
+            if os.path.exists(p_cand):
+                # Ignora se for o proprio arquivo de saida que esta sendo gerado
+                if not caminho_saida_dwg or os.path.abspath(p_cand) != os.path.abspath(caminho_saida_dwg):
+                    candidatos_lajes.append(p_cand)
+
+        # c) Se e SOMENTE SE for um pavimento Tipo, busca referencias de Pavimento Tipo
+        if "TIPO" in pavimento_nome.upper():
+            for cand_name in [
+                "PRE_FOR_1aFIADA_Tipo.DWG",
+                "PRE_FOR_1aFIADA_TIPO A.DWG",
+                "EP - PRE_FOR_1aFIADA_TIPO A.DWG",
+            ]:
+                for p_dir in [pasta_pav, os.path.join(pasta_edificio, "TIPO A")]:
+                    p_c = os.path.join(p_dir, cand_name)
+                    if os.path.exists(p_c) and p_c not in candidatos_lajes:
+                        if not caminho_saida_dwg or os.path.abspath(p_c) != os.path.abspath(caminho_saida_dwg):
+                            candidatos_lajes.append(p_c)
+
+        # Avalia candidatos e seleciona o melhor arquivo (com maior numero de linhas validas no Nivel 237)
+        melhor_candidato_lajes = None
+        melhor_linhas_lajes = []
+
+        for p_cand in candidatos_lajes:
+            if os.path.exists(p_cand):
+                dwg_cand = TQSDwg.Dwg(pedmv=0)
+                if dwg_cand.file.Open(p_cand) == 0:
+                    it_c = dwg_cand.iterator
+                    it_c.Begin()
+                    linhas_cand = []
+                    while True:
+                        pos = it_c.GetElementReadPosition()
+                        if pos:
+                            el = it_c.elementName
+                            lvl = it_c.level
+                            # ESTREITAMENTE Nivel 237 (Nivel 231 e alvenaria do modelador, NAO laje!)
+                            if lvl == 237 and el in ["Linha", "Polyline", "Indefinido"]:
+                                x_val = getattr(it_c, "x1", 0.0)
+                                y_val = getattr(it_c, "y1", 0.0)
+                                if x_min_ed <= x_val <= x_max_ed and y_min_ed <= y_val <= y_max_ed:
+                                    item = {
+                                        "tipo": el,
+                                        "nivel": 237,
+                                        "cor": 6 if it_c.color == 0 else it_c.color,
+                                        "x1": it_c.x1,
+                                        "y1": it_c.y1,
+                                        "x2": it_c.x2,
+                                        "y2": it_c.y2,
+                                    }
+                                    if el == "Polyline":
+                                        item["pontos"] = [it_c.GetPolylinePt(i) for i in range(it_c.xySize)]
+                                    linhas_cand.append(item)
+                        if not it_c.Next():
+                            break
+                    dwg_cand.file.Close()
+
+                    if len(linhas_cand) > len(melhor_linhas_lajes):
+                        melhor_linhas_lajes = linhas_cand
+                        melhor_candidato_lajes = p_cand
+
+        elementos_lajes_externas = melhor_linhas_lajes
+
+                # Vigas (FOR*.DWG) e divisórias de laje (LAJ*.DWG) NUNCA devem ser convertidas para o Nível 237!
+
+        # -------------------------------------------------------------------------
+        # 2. COLUNA TECNICA LATERAL (RESUMO DE MATERIAIS, LEGENDAS, NOTAS E DETALHES)
+        # -------------------------------------------------------------------------
+        candidatos_laterais = [
             os.path.join(pasta_pav, "PRE_FOR_1aFIADA_Tipo.DWG"),
-            os.path.join(pasta_pav, "PRE_FOR_1aFIADA-R01.DWG"),
-            os.path.join(pasta_pav, "PRE_FOR_1aFIADA-R00.DWG"),
+            os.path.join(pasta_pav, f"PRE_FOR_1aFIADA_{pavimento_nome}.DWG"),
             os.path.join(pasta_pav, "PRE_FOR_1aFIADA.DWG"),
-            os.path.join(pasta_pav, "PRE_FOR_1aFIADA_TIPO A.DWG"),
-            os.path.join(pasta_pav, "EP - PRE_FOR_1aFIADA_TIPO A.DWG"),
             os.path.join(pasta_edificio, "TIPO A", "PRE_FOR_1aFIADA_TIPO A.DWG"),
             os.path.join(pasta_edificio, "TIPO A", "EP - PRE_FOR_1aFIADA_TIPO A.DWG"),
-            os.path.join(pasta_pav, "PRE_FOR_1aFIADA_TIPO A - Backup.DWG"),
-            os.path.join(pasta_pav, "PRE_FOR_1aFIADA_TIPO A_BKP.DWG"),
+            os.path.join(pasta_pav, "PRE_FOR_1aFIADA-R01.DWG"),
+            os.path.join(pasta_pav, "PRE_FOR_1aFIADA-R00.DWG"),
         ]
-        if os.path.exists(pasta_pav):
-            for f in os.listdir(pasta_pav):
-                if f.upper().startswith("PRE_FOR") and f.upper().endswith(".DWG") and "BKP" not in f.upper():
-                    candidatos.append(os.path.join(pasta_pav, f))
-
-        cands_unicos = []
-        vistos = set()
-        for c in candidatos:
-            c_norm = os.path.normpath(c).upper()
-            if os.path.exists(c) and c_norm not in vistos:
-                vistos.add(c_norm)
-                cands_unicos.append(c)
-
-        for p_ref in cands_unicos:
-            dwg_ref = TQSDwg.Dwg(pedmv=0)
-            if dwg_ref.file.Open(p_ref) == 0:
-                it = dwg_ref.iterator
-                it.Begin()
-                while True:
-                    pos = it.GetElementReadPosition()
-                    if pos:
-                        el = it.elementName
-                        lvl = it.level
-                        txt = getattr(it, "text", "").strip()
-                        x_val = getattr(it, "x1", 0.0)
-                        y_val = getattr(it, "y1", 0.0)
-
-                        # 1) Contornos e bordas de lajes externas e sacadas (Niveis 231 e 237) no perimetro
-                        if lvl in [231, 237] and x_min_ed <= x_val <= x_max_ed and y_min_ed <= y_val <= y_max_ed:
-                            item = {
-                                "tipo": el,
-                                "nivel": 237,
-                                "cor": 6 if it.color == 0 else it.color,
-                                "x1": it.x1,
-                                "y1": it.y1,
-                                "x2": it.x2,
-                                "y2": it.y2,
-                            }
-                            if el == "Polyline":
-                                item["pontos"] = [it.GetPolylinePt(i) for i in range(it.xySize)]
-                            elementos_lajes_externas.append(item)
-
-                        # 2) Coluna tecnica lateral (Resumo de materiais, legendas, notas e detalhes)
-                        elif not elementos_laterais and x_val > bx_max + 50.0 and lvl not in [230, 239, 10, 13]:
-                            item = {
-                                "tipo": el,
-                                "nivel": lvl,
-                                "cor": it.color,
-                                "x1": it.x1,
-                                "y1": it.y1,
-                                "x2": it.x2,
-                                "y2": it.y2,
-                            }
-                            if el == "Texto":
-                                item["h"] = max(it.textHeight, 8.0)
-                                item["ang"] = it.textAngle
-                                item["texto"] = txt
-                            elif el == "Circulo":
-                                item["xc"] = it.xc
-                                item["yc"] = it.yc
-                                item["raio"] = it.radius
-                            elif el == "Bloco":
-                                item["bloco"] = getattr(it, "blockName", "")
-                                item["esc_x"] = it.xScale
-                                item["esc_y"] = it.yScale
-                                item["ang"] = it.insertAngle
-                            elif el == "Polyline":
-                                item["pontos"] = [it.GetPolylinePt(i) for i in range(it.xySize)]
-                            elementos_laterais.append(item)
-
-                    if not it.Next():
-                        break
-                dwg_ref.file.Close()
-
-            if len(elementos_lajes_externas) >= 50 and len(elementos_laterais) >= 50:
-                break
-
-        # Fallback para lajes externas a partir do LAJ*.DWG ou FOR*.DWG caso o reference DWG nao tenha
-        if len(elementos_lajes_externas) < 20:
-            for f in os.listdir(pasta_pav):
-                if (f.upper().startswith("LAJ") or f.upper().startswith("FOR")) and f.upper().endswith(".DWG"):
-                    p_aux = os.path.join(pasta_pav, f)
-                    dwg_aux = TQSDwg.Dwg(pedmv=0)
-                    if dwg_aux.file.Open(p_aux) == 0:
-                        it_a = dwg_aux.iterator
-                        it_a.Begin()
-                        while True:
-                            pos = it_a.GetElementReadPosition()
-                            if pos:
-                                el = it_a.elementName
-                                lvl = it_a.level
-                                if el in ["Linha", "Polyline", "Indefinido"] and lvl in [0, 1]:
-                                    x_val = getattr(it_a, "x1", 0.0)
-                                    y_val = getattr(it_a, "y1", 0.0)
-                                    if x_min_ed <= x_val <= x_max_ed and y_min_ed <= y_val <= y_max_ed:
-                                        item = {
-                                            "tipo": el,
-                                            "nivel": 237,
-                                            "cor": 6,
-                                            "x1": it_a.x1,
-                                            "y1": it_a.y1,
-                                            "x2": it_a.x2,
-                                            "y2": it_a.y2,
-                                        }
-                                        if el == "Polyline":
-                                            item["pontos"] = [it_a.GetPolylinePt(i) for i in range(it_a.xySize)]
-                                        elementos_lajes_externas.append(item)
-                            if not it_a.Next():
-                                break
-                        dwg_aux.file.Close()
-                    if len(elementos_lajes_externas) >= 20:
-                        break
+        # Adiciona candidatos de outros pavimentos do mesmo edifício como fallback para notas e legendas
+        for d in sorted(os.listdir(pasta_edificio)):
+            p_dir = os.path.join(pasta_edificio, d)
+            if os.path.isdir(p_dir) and p_dir != pasta_pav:
+                for f in sorted(os.listdir(p_dir)):
+                    if f.upper().startswith("PRE_FOR") and f.upper().endswith(".DWG"):
+                        p_cand_ed = os.path.join(p_dir, f)
+                        if p_cand_ed not in candidatos_laterais:
+                            candidatos_laterais.append(p_cand_ed)
+        for p_lat in candidatos_laterais:
+            if caminho_saida_dwg and os.path.abspath(p_lat) == os.path.abspath(caminho_saida_dwg):
+                continue
+            if os.path.exists(p_lat):
+                dwg_lat = TQSDwg.Dwg(pedmv=0)
+                if dwg_lat.file.Open(p_lat) == 0:
+                    it_l = dwg_lat.iterator
+                    it_l.Begin()
+                    itens_deste_arquivo = []
+                    while True:
+                        pos = it_l.GetElementReadPosition()
+                        if pos:
+                            el = it_l.elementName
+                            lvl = it_l.level
+                            txt = getattr(it_l, "text", "").strip()
+                            x_val = getattr(it_l, "x1", 0.0)
+                            y_val = getattr(it_l, "y1", 0.0)
+                            if x_val > bx_max + 50.0 and lvl not in [230, 239, 10, 13, 237, 231]:
+                                item = {
+                                    "tipo": el,
+                                    "nivel": lvl,
+                                    "cor": it_l.color,
+                                    "x1": it_l.x1,
+                                    "y1": it_l.y1,
+                                    "x2": it_l.x2,
+                                    "y2": it_l.y2,
+                                }
+                                if el == "Texto":
+                                    item["h"] = max(it_l.textHeight, 8.0)
+                                    item["ang"] = it_l.textAngle
+                                    item["texto"] = txt
+                                elif el == "Circulo":
+                                    item["xc"] = it_l.xc
+                                    item["yc"] = it_l.yc
+                                    item["raio"] = it_l.radius
+                                elif el == "Bloco":
+                                    item["bloco"] = getattr(it_l, "blockName", "")
+                                    item["esc_x"] = it_l.xScale
+                                    item["esc_y"] = it_l.yScale
+                                    item["ang"] = it_l.insertAngle
+                                elif el == "Polyline":
+                                    item["pontos"] = [it_l.GetPolylinePt(i) for i in range(it_l.xySize)]
+                                itens_deste_arquivo.append(item)
+                        if not it_l.Next():
+                            break
+                    dwg_lat.file.Close()
+                    if len(itens_deste_arquivo) >= 30:
+                        elementos_laterais = itens_deste_arquivo
+                        break  # Carrega de um unico arquivo consistente!
 
         return {"laterais": elementos_laterais, "lajes_externas": elementos_lajes_externas}
 
@@ -986,6 +1238,7 @@ class AlvenariaDwgBuilder:
         self,
         dwg: TQSDwg.Dwg,
         elementos_referencia: List[Dict[str, Any]],
+        bounds_planta: Optional[List[float]] = None,
     ):
         """Insere os elementos de resumo, legendas, detalhes e contornos de laje na prancha."""
         for item in elementos_referencia:
@@ -1011,27 +1264,29 @@ class AlvenariaDwgBuilder:
             elif el == "Bloco" and item.get("bloco"):
                 dwg.draw.BlockInsert(item["bloco"], item["x1"], item["y1"], item["esc_x"], item["esc_y"], item["ang"])
 
-        # Garante o fechamento da borda completa da LEGENDA - BLOCOS CERÂMICOS (Nível 0, Cor 7)
-        x_leg_0, x_leg_1 = 3800.3, 4290.8
-        y_leg_top, y_leg_head, y_leg_bot = 555.6, 495.0, -28.2
-        dwg.draw.level = 0
-        dwg.draw.color = 7
+        # Garante o fechamento da borda completa da LEGENDA - BLOCOS CERAMICOS (Nivel 0, Cor 7)
+        # APENAS se os limites da planta forem compativeis com as coordenadas do Edificio 054 (bx_max < 3000)
+        if bounds_planta and bounds_planta[1] < 3000.0:
+            x_leg_0, x_leg_1 = 3800.3, 4290.8
+            y_leg_top, y_leg_head, y_leg_bot = 555.6, 495.0, -28.2
+            dwg.draw.level = 0
+            dwg.draw.color = 7
 
-        tem_topo_legenda = any(
-            item["tipo"] in ["Linha", "Polyline", "Indefinido"]
-            and item["nivel"] == 0
-            and abs(item["y1"] - y_leg_top) < 1.0
-            and abs(item["y2"] - y_leg_top) < 1.0
-            and item["x1"] >= 3790.0
-            for item in elementos_referencia
-        )
-        if not tem_topo_legenda:
-            dwg.draw.Line(x_leg_0, y_leg_top, x_leg_1, y_leg_top)
+            tem_topo_legenda = any(
+                item["tipo"] in ["Linha", "Polyline", "Indefinido"]
+                and item["nivel"] == 0
+                and abs(item["y1"] - y_leg_top) < 1.0
+                and abs(item["y2"] - y_leg_top) < 1.0
+                and item["x1"] >= 3790.0
+                for item in elementos_referencia
+            )
+            if not tem_topo_legenda:
+                dwg.draw.Line(x_leg_0, y_leg_top, x_leg_1, y_leg_top)
 
-        dwg.draw.Line(x_leg_0, y_leg_bot, x_leg_1, y_leg_bot)       # Borda inferior
-        dwg.draw.Line(x_leg_0, y_leg_top, x_leg_0, y_leg_bot)       # Lateral esquerda
-        dwg.draw.Line(x_leg_1, y_leg_top, x_leg_1, y_leg_bot)       # Lateral direita
-        dwg.draw.Line(x_leg_0, y_leg_head, x_leg_1, y_leg_head)     # Divisória do título
+            dwg.draw.Line(x_leg_0, y_leg_bot, x_leg_1, y_leg_bot)       # Borda inferior
+            dwg.draw.Line(x_leg_0, y_leg_top, x_leg_0, y_leg_bot)       # Lateral esquerda
+            dwg.draw.Line(x_leg_1, y_leg_top, x_leg_1, y_leg_bot)       # Lateral direita
+            dwg.draw.Line(x_leg_0, y_leg_head, x_leg_1, y_leg_head)     # Divisoria do titulo
 
     def _auditar_dwg(self, caminho_dwg: str) -> Dict[str, Any]:
         """Audita a integridade do DWG emitido verificando elementos, camadas e alturas de texto."""

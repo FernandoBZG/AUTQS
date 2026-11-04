@@ -52,13 +52,14 @@ class AutqsAgentOrchestrator:
 
         # 2. Extração automática do edifício se não especificado explicitamente
         if "edificio_nome" not in params:
-            num_match = re.search(r'\b(0\d{2}|\d{3,4})\b', comando)
+            num_match = re.search(r'(?<![\d.])(0\d{2}|\d{3,4})(?![\d.])', comando)
             if num_match:
                 params["edificio_nome"] = num_match.group(1)
             else:
                 eds = TQSBuildingReader.listar_edificios_disponiveis()
                 for ed in eds:
-                    tokens = [w for w in re.split(r'[\s\-_\[\]]+', ed["nome"].lower()) if len(w) > 3]
+                    PALAVRAS_RESERVADAS_EDIFICIO = {"pilar", "pilares", "viga", "vigas", "laje", "lajes", "pavimento", "pavimentos", "piso", "pisos", "edificio", "edificios", "modelo", "modelos", "carga", "cargas", "planta", "plantas", "forma", "formas", "projeto", "projetos", "obra", "obras", "modificacao", "modificacoes", "alteracao", "alteracoes", "terreo"}
+                    tokens = [w for w in re.split(r'[\s\-_[\]]+', ed["nome"].lower()) if len(w) > 3 and w not in PALAVRAS_RESERVADAS_EDIFICIO]
                     if any(t in cmd_lower for t in tokens):
                         params["edificio_nome"] = ed["nome"]
                         break
@@ -182,9 +183,30 @@ class AutqsAgentOrchestrator:
             return self.registry.executar_ferramenta("gerar_planta_formas_alvenaria", params)
 
         # 8. Geração de Planta de Cargas / Gabarito
-        if "planta" in cmd_lower or "carga" in cmd_lower or "gabarito" in cmd_lower:
+        m_coords_avulsas = re.search(
+            r'^\s*(?:mudar\s+(?:para\s+)?)?(?:origem\s+(?:para\s+)?)?([+-]?\d{2,}(?:\.\d+)?)\s*[,;\s]\s*([+-]?\d{2,}(?:\.\d+)?)\s*$',
+            comando,
+            re.IGNORECASE,
+        )
+        eh_planta_cargas = (
+            "planta" in cmd_lower or "carga" in cmd_lower or "gabarito" in cmd_lower
+            or ("cota" in cmd_lower and any(k in cmd_norm for k in ["REFERENC", "ORIGEM", "PONTO", "0,0"]))
+            or bool(m_coords_avulsas)
+            or ("mudar" in cmd_lower and any(k in cmd_norm for k in ["ORIGEM", "PONTO", "COTA", "REFERENC"]))
+        )
+        if eh_planta_cargas:
             if "caminho_saida_desenho" not in params:
                 params["caminho_saida_desenho"] = "GABARITO.DWG"
+            if "origem_cotas" not in params:
+                if m_coords_avulsas:
+                    params["origem_cotas"] = (float(m_coords_avulsas.group(1)), float(m_coords_avulsas.group(2)))
+                else:
+                    m_orig = re.search(r'(?:ponto|origem|refer[eê]ncia|mudar\s+para)[^\d+-]*?([+-]?\d+(?:\.\d+)?)\s*[,;\s]\s*([+-]?\d+(?:\.\d+)?)', comando, re.IGNORECASE)
+                    if m_orig:
+                        try:
+                            params["origem_cotas"] = (float(m_orig.group(1)), float(m_orig.group(2)))
+                        except Exception:
+                            pass
             return self.registry.executar_ferramenta("gerar_planta_de_cargas", params)
 
         return {

@@ -114,6 +114,8 @@ def main():
     parser = argparse.ArgumentParser(description="AUTQS CLI - Plataforma de IA e Automação para TQS V25")
     parser.add_argument("--edificio", type=str, default=None, help="Nome ou código do edifício TQS (ex: '054' ou nome completo)")
     parser.add_argument("--desenho", type=str, default=None, help="Caminho do arquivo de desenho de saída (DWG/DXF)")
+    parser.add_argument("--origem-x", type=float, default=None, help="Coordenada X (cm) da origem (0,0) das cotas relativas")
+    parser.add_argument("--origem-y", type=float, default=None, help="Coordenada Y (cm) da origem (0,0) das cotas relativas")
     parser.add_argument("--listar", "-l", action="store_true", help="Lista todos os edifícios encontrados no sistema TQS")
     parser.add_argument("--chat", "-c", action="store_true", help="Inicia o chat interativo no terminal com o Agente AUTQS")
     parser.add_argument("--processar", "-p", nargs="?", const="portico_cargas", default=None, help="Executa o processamento do edifício no TQS (opções: 'portico_cargas' ou 'global')")
@@ -663,10 +665,11 @@ def main():
 
             # Geração da Prancha de Desenho
             caminho_saida = args.desenho or "GABARITO.DWG"
+            origem_cotas = (args.origem_x, args.origem_y) if (args.origem_x is not None and args.origem_y is not None) else None
             if caminho_saida.lower().endswith(".dwg"):
                 from src.drawing.tqs_dwg_builder import TQSDwgPlantaDeCargasBuilder
                 builder = TQSDwgPlantaDeCargasBuilder()
-                arquivo_gerado = builder.construir_planta_de_cargas(planta, caminho_saida)
+                arquivo_gerado = builder.construir_planta_de_cargas(planta, caminho_saida, origem_cotas=origem_cotas)
             else:
                 from src.drawing.sheet_builder import PlantaDeCargasDwgBuilder
                 builder = PlantaDeCargasDwgBuilder(escala=50)

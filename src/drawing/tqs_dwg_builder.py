@@ -180,6 +180,7 @@ class TQSDwgPlantaDeCargasBuilder:
         planta: PlantaDeCargasModel,
         arquivo_saida_dwg: str,
         escala: Optional[int] = None,
+        origem_cotas: Optional[Tuple[float, float]] = None,
     ) -> str:
         """
         Gera a folha .DWG nativa do TQS adaptada automaticamente a qualquer edifício.
@@ -256,20 +257,22 @@ class TQSDwgPlantaDeCargasBuilder:
         dwg.settings.scale = float(escala)
         dwg.dim.dimtxt = 0.20
 
-        # Redefine a origem das cotas relativas (IPOCOTREL) para a origem global (0, 0, 0)
+        # Redefine a origem das cotas relativas (IPOCOTREL) para a origem especificada (ou 0, 0, 0)
+        rx = float(origem_cotas[0]) if origem_cotas else 0.0
+        ry = float(origem_cotas[1]) if origem_cotas else 0.0
         if self._mdwg_dll is not None and hasattr(dwg, "m_pedmv") and dwg.m_pedmv:
             try:
                 self._mdwg_dll.g_edmexdefcotrel(
                     ctypes.c_void_p(dwg.m_pedmv),
-                    ctypes.c_double(0.0),
-                    ctypes.c_double(0.0),
+                    ctypes.c_double(rx),
+                    ctypes.c_double(ry),
                     ctypes.c_double(0.0),
                 )
             except Exception:
                 pass
 
         # 3. Desenha a Planta de Locação dos Pilares nas suas coordenadas originais
-        self._desenhar_pilares_locacao(dwg, planta.pilares, bounds_planta, escala=escala)
+        self._desenhar_pilares_locacao(dwg, planta.pilares, bounds_planta, escala=escala, origem_cotas=origem_cotas)
 
         # 4. Disposição Inteligente das Tabelas para Enquadramento em Molduras Padrão TQS
         w_bar_est = 735.0 * fator_esc
@@ -310,7 +313,7 @@ class TQSDwgPlantaDeCargasBuilder:
             # 1. Tabela de Baricentros
             x_bar = x_base
             y_fim_bar, larg_tabela_bar = self._desenhar_tabela_baricentros(
-                dwg, planta.pilares, x_start=x_bar, y_start=y_topo_tabelas, escala=escala
+                dwg, planta.pilares, x_start=x_bar, y_start=y_topo_tabelas, escala=escala, origem_cotas=origem_cotas
             )
 
             # 2. Tabela de Cargas (ao lado da de baricentros)
@@ -327,7 +330,7 @@ class TQSDwgPlantaDeCargasBuilder:
             # 3. Notas, Convenção de Sinais e Legenda (ao lado da de cargas)
             x_notas = x_cargas + larg_tabela_cargas + espaco_inter
             y_fim_notas = self._desenhar_notas_e_legendas(
-                dwg, x_start=x_notas, y_start=y_topo_tabelas, dados_porlid=planta.dados_porlid, escala=escala
+                dwg, x_start=x_notas, y_start=y_topo_tabelas, dados_porlid=planta.dados_porlid, escala=escala, origem_cotas=origem_cotas
             )
 
             larg_notas_real = 2700.0 * fator_esc
@@ -352,7 +355,7 @@ class TQSDwgPlantaDeCargasBuilder:
             # 1. Tabela de Baricentros (coluna 1 da direita)
             x_bar = x_start_dir
             y_fim_bar, larg_tabela_bar = self._desenhar_tabela_baricentros(
-                dwg, planta.pilares, x_start=x_bar, y_start=y_topo_tabelas, escala=escala
+                dwg, planta.pilares, x_start=x_bar, y_start=y_topo_tabelas, escala=escala, origem_cotas=origem_cotas
             )
 
             # 2. Tabela de Cargas (coluna 2 da direita, alinhada no topo com Baricentros)
@@ -370,7 +373,7 @@ class TQSDwgPlantaDeCargasBuilder:
             y_topo_notas = min(y_fim_bar, y_fim_cargas) - (70.0 * fator_esc)
             x_notas = x_start_dir
             y_fim_notas = self._desenhar_notas_e_legendas(
-                dwg, x_start=x_notas, y_start=y_topo_notas, dados_porlid=planta.dados_porlid, escala=escala
+                dwg, x_start=x_notas, y_start=y_topo_notas, dados_porlid=planta.dados_porlid, escala=escala, origem_cotas=origem_cotas
             )
 
             larg_notas_real = 2700.0 * fator_esc
@@ -501,6 +504,7 @@ class TQSDwgPlantaDeCargasBuilder:
         pilares: List[PilarFundacao],
         bounds: Tuple[float, float, float, float],
         escala: int = 50,
+        origem_cotas: Optional[Tuple[float, float]] = None,
     ):
         """
         Desenha cada pilar em suas coordenadas espaciais reais:
@@ -701,8 +705,12 @@ class TQSDwgPlantaDeCargasBuilder:
             if not criou_nativo:
                 h_cota = max(13.5 * fator_esc, h_min_normativo)
                 # Fallback vetorial idêntico caso IPOCOTREL.dll não esteja acessível no ambiente
+                rx = float(origem_cotas[0]) if origem_cotas else 0.0
+                ry = float(origem_cotas[1]) if origem_cotas else 0.0
                 if emitir_cota_y:
-                    val_y_num = round(cg.y, 1)
+                    val_y_num = round(cg.y - ry, 1)
+                    if abs(val_y_num) < 1e-4:
+                        val_y_num = 0.0
                     val_y_str = f"{val_y_num:.1f}".rstrip("0").rstrip(".") if "." in f"{val_y_num:.1f}" else f"{val_y_num:.0f}"
                     # Triângulo indicador apontando para baixo sobre a linha horizontal
                     dwg.draw.Line(xv_y, yv_y, xv_y + (7.5 * fator_esc), yv_y + (15.0 * fator_esc))
@@ -717,7 +725,9 @@ class TQSDwgPlantaDeCargasBuilder:
                     dwg.draw.Text(xv_y, yv_y + (22.5 * fator_esc) + (3.4 * fator_esc), h_cota, 0.0, val_y_str)
 
                 if emitir_cota_x:
-                    val_x_num = round(cg.x, 1)
+                    val_x_num = round(cg.x - rx, 1)
+                    if abs(val_x_num) < 1e-4:
+                        val_x_num = 0.0
                     val_x_str = f"{val_x_num:.1f}".rstrip("0").rstrip(".") if "." in f"{val_x_num:.1f}" else f"{val_x_num:.0f}"
                     # Triângulo indicador apontando para a direita sobre a linha vertical
                     dwg.draw.Line(xv_x, yv_x, xv_x - (15.0 * fator_esc), yv_x + (7.5 * fator_esc))
@@ -745,6 +755,22 @@ class TQSDwgPlantaDeCargasBuilder:
             dim_str = f"{int(round(geom.b))}x{int(round(geom.h))}"
             dwg.draw.Text(xd, yd, h_pilar_dim, 0.0, dim_str)
 
+        # 5. Marcador de Origem (0,0) na planta de locação se especificado
+        if origem_cotas:
+            rx = float(origem_cotas[0])
+            ry = float(origem_cotas[1])
+            # Eixos em cruz (Nível 21)
+            dwg.draw.level = 21
+            tam_cruz = 50.0 * fator_esc
+            dwg.draw.Line(rx - tam_cruz, ry, rx + tam_cruz, ry)
+            dwg.draw.Line(rx, ry - tam_cruz, rx, ry + tam_cruz)
+            dwg.draw.Circle(rx, ry, 12.0 * fator_esc)
+            dwg.draw.Circle(rx, ry, 4.0 * fator_esc)
+            # Texto identificador da Origem
+            dwg.draw.level = 250
+            h_orig_txt = max(14.0 * fator_esc, h_min_normativo)
+            dwg.draw.Text(rx + (16.0 * fator_esc), ry + (8.0 * fator_esc), h_orig_txt, 0.0, "ORIGEM (0,0)")
+
     def _desenhar_tabela_baricentros(
         self,
         dwg: TQSDwg.Dwg,
@@ -752,6 +778,7 @@ class TQSDwgPlantaDeCargasBuilder:
         x_start: float,
         y_start: float,
         escala: int = 50,
+        origem_cotas: Optional[Tuple[float, float]] = None,
     ) -> Tuple[float, float]:
         """
         Desenha as DUAS tabelas de baricentros de pilares lado a lado:
@@ -886,12 +913,20 @@ class TQSDwgPlantaDeCargasBuilder:
             curr_y -= h_linha
             dwg.draw.Line(x1_0, curr_y, x1_1, curr_y)
 
+            rx = float(origem_cotas[0]) if origem_cotas else 0.0
+            ry = float(origem_cotas[1]) if origem_cotas else 0.0
             px = p_ord_x[i]
             py = p_ord_y[i]
             nome_px = str(px.nome)
-            val_x = f"{px.baricentro.x:.1f}" if px.baricentro else "0.0"
+            vx = (px.baricentro.x - rx) if px.baricentro else 0.0
+            if abs(vx) < 1e-4:
+                vx = 0.0
+            val_x = f"{vx:.1f}"
             nome_py = str(py.nome)
-            val_y = f"{py.baricentro.y:.1f}" if py.baricentro else "0.0"
+            vy = (py.baricentro.y - ry) if py.baricentro else 0.0
+            if abs(vy) < 1e-4:
+                vy = 0.0
+            val_y = f"{vy:.1f}"
 
             # Coluna 0: PILAR (ord X) - Alinhado à esquerda com margem +15.0 cm
             c0_x = x1_0
@@ -960,8 +995,14 @@ class TQSDwgPlantaDeCargasBuilder:
 
             p = p_ord_nome[i]
             nome_p = str(p.nome)
-            val_x = f"{p.baricentro.x:.1f}" if p.baricentro else "0.0"
-            val_y = f"{p.baricentro.y:.1f}" if p.baricentro else "0.0"
+            vx = (p.baricentro.x - rx) if p.baricentro else 0.0
+            if abs(vx) < 1e-4:
+                vx = 0.0
+            val_x = f"{vx:.1f}"
+            vy = (p.baricentro.y - ry) if p.baricentro else 0.0
+            if abs(vy) < 1e-4:
+                vy = 0.0
+            val_y = f"{vy:.1f}"
 
             # Coluna 0: PILAR - Alinhado à esquerda com margem +15.0 cm
             c0_x = x2_0
@@ -1218,6 +1259,7 @@ class TQSDwgPlantaDeCargasBuilder:
         y_start: float,
         dados_porlid: Optional[Dict[str, Any]] = None,
         escala: int = 50,
+        origem_cotas: Optional[Tuple[float, float]] = None,
     ) -> float:
         """
         Desenha os 3 blocos informativos rigorosamente iguais ao modelo GEO_CARGAS do Zuckhan Soledade:
@@ -1250,6 +1292,19 @@ class TQSDwgPlantaDeCargasBuilder:
         dwg.draw.level = 250
         dwg.draw.Text(x_start, curr_y, h_txt, 0.0, "- Esforços com valores característicos.")
         curr_y -= dy_linha
+
+        if origem_cotas:
+            rx = float(origem_cotas[0])
+            ry = float(origem_cotas[1])
+            dwg.draw.level = 250
+            dwg.draw.Text(
+                x_start,
+                curr_y,
+                h_txt,
+                0.0,
+                f"- Origem (0,0) das cotas e coordenadas de locação referenciada ao ponto (X={rx:.1f}, Y={ry:.1f}) cm.",
+            )
+            curr_y -= dy_linha
 
         dwg.draw.level = 0
         dwg.draw.Text(

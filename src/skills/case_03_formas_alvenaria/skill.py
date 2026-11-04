@@ -110,9 +110,16 @@ class FormasAlvenariaSkill(BaseSkill):
     def validar(self, resultado: Dict[str, Any]) -> bool:
         """
         Guardrails de Engenharia Estrutural:
-        - O arquivo .DWG de saída deve existir e ter tamanho não nulo;
-        - As camadas vitais (10=lajes, 13=espessuras, 222=título, 230=moldura, 239=vãos, 247=paredes) devem estar presentes;
-        - Deve possuir lajes e vãos mapeados;
+        - O arquivo .DWG de saida deve existir e ter tamanho valido (> 10 KB);
+        - As camadas vitais estruturais e de identificacao devem estar presentes:
+          * 10: Identificador de lajes (L#)
+          * 13: Espessura de lajes (h=...)
+          * 222: Titulo da prancha
+          * 230: Moldura oficial TQS/ABNT
+          * 237: Contorno externo de lajes e sacadas (obrigatorio)
+          * 239: Cotas modulares e dimensoes de vaos ($BLVAO)
+          * 247: Paredes de alvenaria estrutural
+        - Deve possuir lajes e vaos mapeados;
         - Escala configurada deve ser 50.
         """
         if not resultado.get("sucesso", False):
@@ -122,16 +129,21 @@ class FormasAlvenariaSkill(BaseSkill):
         if not caminho_dwg or not os.path.exists(caminho_dwg):
             return False
 
-        if os.path.getsize(caminho_dwg) < 1024:
+        if os.path.getsize(caminho_dwg) < 10240:
             return False
 
         auditoria = resultado.get("auditoria", {})
         niveis = auditoria.get("niveis_utilizados", [])
         
-        # Verifica se as camadas estruturais e de identificação essenciais estão no desenho
+        # Verifica se as camadas estruturais e de identificacao essenciais estao no desenho
         camadas_obrigatorias = [10, 13, 222, 230, 239, 247]
         for c in camadas_obrigatorias:
             if c not in niveis:
+                return False
+
+        # Nivel 237: obrigatorio se houver sacadas externas ou shafts mapeados
+        if resultado.get("total_lajes_externas", 0) > 0 or resultado.get("total_shafts", 0) > 0:
+            if 237 not in niveis:
                 return False
 
         if resultado.get("total_lajes", 0) <= 0:

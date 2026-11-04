@@ -62,6 +62,14 @@ class ToolsRegistry:
                             "escala": {
                                 "type": "integer",
                                 "description": "Escala do desenho (50, 75 ou 100). Se omitido, auto-seleciona a ideal."
+                            },
+                            "origem_x": {
+                                "type": "number",
+                                "description": "Coordenada X (cm) de referência da origem (0,0) das cotas relativas."
+                            },
+                            "origem_y": {
+                                "type": "number",
+                                "description": "Coordenada Y (cm) de referência da origem (0,0) das cotas relativas."
                             }
                         },
                         "required": ["edificio_nome"]
@@ -497,6 +505,12 @@ class ToolsRegistry:
         """
         if nome_funcao in self._skills:
             skill = self._skills[nome_funcao]
+            if nome_funcao == "gerar_planta_de_cargas":
+                if "origem_cotas" not in argumentos and "origem_x" in argumentos and "origem_y" in argumentos:
+                    try:
+                        argumentos["origem_cotas"] = (float(argumentos["origem_x"]), float(argumentos["origem_y"]))
+                    except Exception:
+                        pass
             return skill.executar(**argumentos)
 
         # Roteamento das ferramentas do Modelador Estrutural

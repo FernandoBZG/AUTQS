@@ -36,7 +36,7 @@ class AutqsChatAgent:
         msg_lower = msg.lower()
 
         # 1. Troca ou especificação de edifício (por código numérico ou por nome)
-        num_match = re.search(r'\b(0\d{2}|\d{3,4})\b', msg)
+        num_match = re.search(r'(?<![\d.])(0\d{2}|\d{3,4})(?![\d.])', msg)
         edificios_disponiveis = TQSBuildingReader.listar_edificios_disponiveis()
         if num_match:
             candidato = num_match.group(1)
@@ -46,7 +46,8 @@ class AutqsChatAgent:
                     break
         else:
             for ed in edificios_disponiveis:
-                tokens = [w for w in re.split(r'[\s\-_\[\]]+', ed["nome"].lower()) if len(w) > 3]
+                PALAVRAS_RESERVADAS_EDIFICIO = {"pilar", "pilares", "viga", "vigas", "laje", "lajes", "pavimento", "pavimentos", "piso", "pisos", "edificio", "edificios", "modelo", "modelos", "carga", "cargas", "planta", "plantas", "forma", "formas", "projeto", "projetos", "obra", "obras", "modificacao", "modificacoes", "alteracao", "alteracoes", "terreo"}
+                tokens = [w for w in re.split(r'[\s\-_[\]]+', ed["nome"].lower()) if len(w) > 3 and w not in PALAVRAS_RESERVADAS_EDIFICIO]
                 if any(t in msg_lower for t in tokens):
                     self.edificio_ativo = ed["nome"]
                     break
@@ -635,17 +636,41 @@ class AutqsChatAgent:
                 }
 
         # 7. Solicitação de Geração de Planta de Cargas / Gabarito
+        m_coords_avulsas = re.search(
+            r'^\s*(?:mudar\s+(?:para\s+)?)?(?:origem\s+(?:para\s+)?)?([+-]?\d{2,}(?:\.\d+)?)\s*[,;\s]\s*([+-]?\d{2,}(?:\.\d+)?)\s*$',
+            msg,
+            re.IGNORECASE,
+        )
         pediu_gerar_planta = (
             ("planta" in msg_lower and any(k in msg_lower for k in ["carga", "loca", "gerar", "desenh", "emitir", "funda"]))
             or any(k in msg_lower for k in ["gerar dwg", "criar dwg", "emitir prancha", "desenhar prancha", "gerar prancha", "gabarito"])
             or "gabarito" in msg_lower
+            or ("cota" in msg_lower and any(k in msg_norm for k in ["REFERENC", "ORIGEM", "PONTO", "0,0"]))
+            or bool(m_coords_avulsas)
+            or ("mudar" in msg_lower and any(k in msg_norm for k in ["ORIGEM", "PONTO", "COTA", "REFERENC"]))
         )
         if pediu_gerar_planta:
             edificio_alvo = self.edificio_ativo or "054"
+            # Detecção de origem de cotas
+            origem_cotas = None
+            if m_coords_avulsas:
+                origem_cotas = (float(m_coords_avulsas.group(1)), float(m_coords_avulsas.group(2)))
+            else:
+                m_orig = re.search(r'(?:ponto|origem|refer[eê]ncia|mudar\s+para)[^\d+-]*?([+-]?\d+(?:\.\d+)?)\s*[,;\s]\s*([+-]?\d+(?:\.\d+)?)', msg, re.IGNORECASE)
+                if m_orig:
+                    try:
+                        origem_cotas = (float(m_orig.group(1)), float(m_orig.group(2)))
+                    except Exception:
+                        pass
+
+            params_planta = {"edificio_nome": edificio_alvo, "caminho_saida_desenho": "GABARITO.DWG"}
+            if origem_cotas:
+                params_planta["origem_cotas"] = origem_cotas
+
             try:
                 res = self.orchestrator.processar_comando_local(
                     "gerar_planta_de_cargas",
-                    {"edificio_nome": edificio_alvo, "caminho_saida_desenho": "GABARITO.DWG"}
+                    params_planta
                 )
 
                 if res.get("status") == "sucesso":
@@ -680,10 +705,16 @@ class AutqsChatAgent:
                     if caminho_bkp:
                         bkp_info = f"- 🛡️ **Backup da Versão Anterior Preservado:** `{os.path.basename(caminho_bkp)}`\n"
 
+                    orig_info = ""
+                    orig_ret = res.get("origem_cotas")
+                    if orig_ret:
+                        orig_info = f"- 📍 **Origem das Cotas Relativas (0,0):** `X = {orig_ret['x_cm']:.2f} cm` | `Y = {orig_ret['y_cm']:.2f} cm`\n"
+
                     resposta_texto = (
                         f"### 🎯 Planta de Cargas e Locação Gerada com Sucesso!\n\n"
                         f"- **Edifício:** `{res.get('edificio')}`\n"
                         f"- **Total de Pilares na Fundação:** **{total} pilares**\n"
+                        f"{orig_info}"
                         f"{porlid_info}"
                         f"- **Escala:** 1:50 com Projeção de Moldura Oficial TQS\n"
                         f"- **Arquivo DWG Nativo:** `{dwg_local}`\n"

@@ -64,6 +64,26 @@ class TestNovasSkillsIntegracao(unittest.TestCase):
         self.assertEqual(ret["status"], "sucesso")
         self.assertIn("resumo_executivo", ret)
 
+    def test_planta_cargas_com_origem_customizada(self):
+        """Testa a extração de origem relativa e recálculo das cotas na planta de cargas."""
+        cmd = "Utilize como referncia para as cotas o 0,0 no ponto 17051.5856 , -4041.0557"
+        ret = self.orchestrator.processar_comando_local(
+            cmd,
+            {"edificio_nome": "054", "gerar_desenho": False}
+        )
+        self.assertEqual(ret["status"], "sucesso")
+        self.assertIsNotNone(ret.get("origem_cotas"))
+        self.assertAlmostEqual(ret["origem_cotas"]["x_cm"], 17051.5856, places=2)
+        self.assertAlmostEqual(ret["origem_cotas"]["y_cm"], -4041.0557, places=2)
+
+        pilares = ret.get("pilares", [])
+        self.assertGreater(len(pilares), 0)
+        p0 = pilares[0]
+        self.assertIn("xcg_rel_cm", p0)
+        self.assertIn("ycg_rel_cm", p0)
+        # O relativo deve bater com xcg_m * 100 - 17051.5856
+        self.assertAlmostEqual(p0["xcg_rel_cm"], round(p0["xcg_m"] * 100 - 17051.5856, 1), places=1)
+
     def test_chat_agent_respostas_ricas(self):
         """Testa a geração de respostas em linguagem natural no ChatAgent."""
         # 1. Estabilidade
