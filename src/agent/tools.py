@@ -11,6 +11,7 @@ from src.skills.case_09_auditoria_lajes.skill import AuditoriaLajesSkill
 from src.skills.case_10_quantitativo_materiais.skill import QuantitativoMateriaisSkill
 from src.skills.case_11_memorial_calculo.skill import MemorialCalculoSkill
 from src.skills.case_12_limpeza_arquitetura.skill import LimpezaArquiteturaSkill
+from src.skills.case_13_geometria_ca.skill import GeometriaCASkill
 from src.tqs_adapter.model_editor import TQSModelEditor
 
 class ToolsRegistry:
@@ -34,6 +35,7 @@ class ToolsRegistry:
         self.registrar_skill(QuantitativoMateriaisSkill())
         self.registrar_skill(MemorialCalculoSkill())
         self.registrar_skill(LimpezaArquiteturaSkill())
+        self.registrar_skill(GeometriaCASkill())
 
     def registrar_skill(self, skill):
         self._skills[skill.nome] = skill
@@ -347,6 +349,31 @@ class ToolsRegistry:
                             }
                         },
                         "required": ["edificio_nome"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "gerar_geometria_concreto_armado",
+                    "description": self._skills["gerar_geometria_concreto_armado"].descricao,
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "edificio_nome": {
+                                "type": "string",
+                                "description": "Nome ou código do edifício TQS (ex: '055' ou 'Flexinc - [055] Jardim Europa CA')."
+                            },
+                            "pavimento": {
+                                "type": "string",
+                                "description": "Nome do pavimento (ex: 'PISO DO SUBSOLO 1', 'Térreo', 'Tipo')."
+                            },
+                            "escala": {
+                                "type": "integer",
+                                "description": "Escala regulamentar do desenho (padrão 50)."
+                            }
+                        },
+                        "required": ["edificio_nome", "pavimento"]
                     }
                 }
             },
