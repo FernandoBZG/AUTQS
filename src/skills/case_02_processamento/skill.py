@@ -66,10 +66,17 @@ class ProcessamentoEdificioSkill(BaseSkill):
             "tem_porlis": res_proc.get("tem_porlis", False),
             "tem_cardwg": res_proc.get("tem_cardwg", False),
             "mensagens_tqs": res_proc.get("mensagens", []),
+            "erro": res_proc.get("erro"),
+            "tarefas_com_falha": res_proc.get("tarefas_com_falha", []),
+            "pavimentos_sem_vigas_dimensionadas": res_proc.get("pavimentos_sem_vigas_dimensionadas", []),
         }
 
-        # 2. Se o processamento concluiu com sucesso e a opção estiver ativa, emite a prancha
-        if res_proc.get("sucesso") and gerar_planta_apos_processar:
+        # 2. A planta de cargas do AUTQS depende apenas do pórtico (CARDWG2/PORLIS2), não do PORLID:
+        #    é emitida sempre que o pórtico foi recalculado, mesmo que tarefas posteriores falhem.
+        portico_ok = res_proc.get("tem_cardwg") and res_proc.get("tem_porlis") and not any(
+            t.startswith("PROC (pórtico") for t in res_proc.get("tarefas_com_falha", [])
+        )
+        if (res_proc.get("sucesso") or portico_ok) and gerar_planta_apos_processar:
             try:
                 skill_planta = PlantaDeCargasSkill()
                 res_planta = skill_planta.executar(

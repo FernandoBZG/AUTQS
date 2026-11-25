@@ -624,19 +624,26 @@ def main():
             }
         )
 
+        planta_gerada = res.get("planta_gerada")
+
         if not res.get("sucesso"):
-            print(f"\n[FALHA] Processamento estrutural falhou:")
-            for msg in res.get("mensagens_tqs", []):
-                print(f"  * {msg}")
+            print(f"\n[FALHA] Processamento estrutural incompleto:")
             if res.get("erro"):
                 print(f"  * {res.get('erro')}")
+            for tarefa in res.get("tarefas_com_falha", []):
+                print(f"  * Tarefa não concluída: {tarefa}")
+            for pav in res.get("pavimentos_sem_vigas_dimensionadas", []):
+                print(f"  * Vigas não dimensionadas no pavimento: {pav}")
+            for msg in res.get("mensagens_tqs", []):
+                print(f"  * {msg}")
+            if planta_gerada and planta_gerada.get("sucesso"):
+                print(f"  * Planta de Cargas emitida (depende apenas do pórtico): {planta_gerada.get('caminho_dwg')}")
             return
 
         print(f"\n[SUCESSO] Processamento do edifício concluído em {res.get('duracao_segundos', 0):.1f}s!")
-        print(f"  * Pórtico Espacial e Reações: {'OK' if res.get('tem_porlis') else 'Não detectado'}")
-        print(f"  * Relatório PORLID:          {'OK' if res.get('tem_cardwg') else 'Não detectado'}")
+        print(f"  * Pórtico Espacial e Reações (PORLIS): {'OK' if res.get('tem_porlis') else 'Não detectado'}")
+        print(f"  * Cargas nos pilares (CARDWG):        {'OK' if res.get('tem_cardwg') else 'Não detectado'}")
 
-        planta_gerada = res.get("planta_gerada")
         if planta_gerada and planta_gerada.get("sucesso"):
             print(f"  * Planta de Cargas (GABARITO.DWG) emitida com sucesso!")
             print(f"    Caminho: {planta_gerada.get('caminho_dwg')}")
