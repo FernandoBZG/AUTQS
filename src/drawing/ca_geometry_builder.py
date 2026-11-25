@@ -52,15 +52,28 @@ class CAGeometryBuilder:
         if not os.path.exists(caminho_for):
             raise FileNotFoundError(f"Arquivo FOR não encontrado: {caminho_for}")
 
-        # Determina nome do GEO_*.DWG
+        # Determina candidatos de GEO_*.DWG na pasta
+        cand_geo = [f for f in os.listdir(pasta_pavimento) if f.upper().startswith("GEO") and f.upper().endswith(".DWG") and "BKP" not in f.upper() and "TEST" not in f.upper()]
+        ativos = [f for f in cand_geo if not any(r in f.upper() for r in ["-R", "_R"])]
+
+        # Determina arquivo de referência existente para extrair Moldura, Título e Notas
+        caminho_ref = None
+        if ativos:
+            caminho_ref = os.path.join(pasta_pavimento, ativos[0])
+        elif cand_geo:
+            caminho_ref = os.path.join(pasta_pavimento, cand_geo[0])
+
         if not geo_dwg_nome:
-            cand_geo = [f for f in os.listdir(pasta_pavimento) if f.upper().startswith("GEO") and f.upper().endswith(".DWG") and "BKP" not in f.upper() and "TEST" not in f.upper()]
-            if cand_geo:
+            if ativos:
+                geo_dwg_nome = ativos[0]
+            elif cand_geo:
                 geo_dwg_nome = cand_geo[0]
             else:
                 geo_dwg_nome = f"GEO_{nome_pavimento.replace('PISO DO ', '')}.DWG"
 
         caminho_geo = os.path.join(pasta_pavimento, geo_dwg_nome)
+        if not caminho_ref:
+            caminho_ref = caminho_geo
 
         # 1. Backup Preventivo
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -70,14 +83,14 @@ class CAGeometryBuilder:
             shutil.copy2(caminho_geo, bkp_path)
             backup_criado = True
 
-        # 2. Coleta de elementos de prancha (Moldura, Título, Notas)
+        # 2. Coleta de elementos de prancha (Moldura, Título, Notas) da prancha de referência
         moldura_elems = []
         title_elems = []
         notes_elems = []
 
-        if os.path.exists(caminho_geo):
+        if os.path.exists(caminho_ref):
             dwg_src = self.TQSDwg.Dwg()
-            dwg_src.file.Open(caminho_geo)
+            dwg_src.file.Open(caminho_ref)
             it = dwg_src.iterator
             it.Begin()
 
@@ -140,7 +153,7 @@ class CAGeometryBuilder:
                 txt = getattr(it_g, "text", "")
                 if any(k in txt for k in ["Planta PISO", "Escala 1:50", "00-PISO", "01-PISO", "02-PISO", "03-PISO"]) and it_g.x1 < 11000 and it_g.y1 >= -2450:
                     to_erase.append(pos)
-                elif it_g.elementName == "Linha" and 8600 <= it_g.x1 <= 9200 and -3350 <= it_g.y1 <= -3200:
+                elif 8600 <= it_g.x1 <= 9250 and -3360 <= it_g.y1 <= -3200:
                     to_erase.append(pos)
             if not it_g.Next():
                 break
@@ -188,6 +201,9 @@ class CAGeometryBuilder:
                     bname, bx, by, escx, escy, bang = n["block"]
                     dwg_geo.draw.BlockInsert(bname, bx, by, escx, escy, bang)
 
+        # Garante propriedades do desenho: Formas -> Planta de formas
+        dwg_geo.settings.systemId = 2  # Formas (IEDFOR)
+        dwg_geo.settings.subSystemId = 2  # Planta de formas
         dwg_geo.settings.scale = escala
         dwg_geo.file.Save()
         dwg_geo.file.Close()

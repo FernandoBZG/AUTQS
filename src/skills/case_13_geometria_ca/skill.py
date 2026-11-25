@@ -1,4 +1,5 @@
 import os
+import unicodedata
 from typing import Any, Dict, Optional
 from src.skills.base_skill import BaseSkill
 from src.drawing.ca_geometry_builder import CAGeometryBuilder
@@ -74,14 +75,19 @@ class GeometriaCASkill(BaseSkill):
             }
 
         # Resolve pavimento
+        def _norm(s: str) -> str:
+            return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn").lower()
+
         pasta_pav = os.path.join(caminho_ed, pavimento)
         nome_pav_resolvido = pavimento
         if not os.path.exists(pasta_pav):
-            # Busca case-insensitive
+            # Busca case-insensitive e insensível a acentuação
             pastas = [d for d in os.listdir(caminho_ed) if os.path.isdir(os.path.join(caminho_ed, d))]
+            pav_n = _norm(pavimento)
             match = None
             for p in pastas:
-                if pavimento.lower() in p.lower() or p.lower() in pavimento.lower():
+                p_n = _norm(p)
+                if pav_n in p_n or p_n in pav_n:
                     match = p
                     break
             if match:

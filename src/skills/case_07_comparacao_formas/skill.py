@@ -5,6 +5,10 @@ from src.skills.case_07_comparacao_formas.geometry_comparator import (
     TQSGeometryComparator,
     RelatorioComparacaoResultado,
 )
+from src.skills.case_07_comparacao_formas.dwg_overlay import (
+    DEFAULT_OVERLAY_COLORS,
+    sobrepor_dwgs_coloridos,
+)
 
 
 class ComparacaoFormasSkill(BaseSkill):
@@ -41,8 +45,12 @@ class ComparacaoFormasSkill(BaseSkill):
         pavimento_comparado: Optional[str] = None,
         caminho_geo: Optional[Union[str, List[str]]] = None,
         caminho_for: Optional[str] = None,
+        arquivos_sobreposicao: Optional[List[Union[str, Dict[str, Any]]]] = None,
+        cores_sobreposicao: Optional[List[Union[int, str]]] = None,
+        gerar_dwg_sobreposto: bool = True,
+        caminho_saida_dwg: Optional[str] = None,
         modo: str = "auto",
-        gerar_desenho_diff: bool = True,
+        gerar_desenho_diff: bool = False,
         caminho_saida_diff: Optional[str] = None,
         formato: str = "resumo",
         **kwargs
@@ -55,11 +63,58 @@ class ComparacaoFormasSkill(BaseSkill):
         :param pavimento_comparado: Pavimento de destino para comparação.
         :param caminho_geo: Caminho de um ou mais arquivos Geo_*.DWG.
         :param caminho_for: Caminho do arquivo FOR*.DWG.
-        :param modo: 'auto', 'dwg', 'edificio_geometrias' ou 'pavimentos'.
+        :param arquivos_sobreposicao: Lista de DWGs (strings ou dicts {'caminho', 'cor'}) para mesclagem colorida nativa TQS.
+        :param cores_sobreposicao: Lista opcional de cores TQS (0..15 ou nomes) paralela a arquivos_sobreposicao.
+        :param gerar_dwg_sobreposto: Se True no modo DWG, gera também DWG nativo sobreposto por cores (DwgMix).
+        :param caminho_saida_dwg: Caminho de saída para o DWG sobreposto.
+        :param modo: 'auto', 'dwg', 'sobrepor_dwg', 'edificio_geometrias' ou 'pavimentos'.
         :param gerar_desenho_diff: Se True, emite desenho DXF com sobreposição gráfica.
         :param caminho_saida_diff: Caminho customizado para salvar o DXF.
         :param formato: 'resumo' (Markdown), 'terminal' ou 'json'.
         """
+        # Caso 0: Sobreposição visual nativa em DWG colorido (TQSDwg ModifyColor + DwgMix)
+        if modo == "sobrepor_dwg" or arquivos_sobreposicao is not None:
+            lista_itens = arquivos_sobreposicao or []
+            pares = []
+            for idx, item in enumerate(lista_itens):
+                cor_padrao = (
+                    cores_sobreposicao[idx]
+                    if cores_sobreposicao and idx < len(cores_sobreposicao)
+                    else DEFAULT_OVERLAY_COLORS[idx % len(DEFAULT_OVERLAY_COLORS)]
+                )
+                if isinstance(item, dict):
+                    pares.append((item["caminho"], item.get("cor", cor_padrao)))
+                elif isinstance(item, (tuple, list)) and len(item) == 2:
+                    pares.append((item[0], item[1]))
+                else:
+                    pares.append((str(item), cor_padrao))
+
+            if len(pares) < 2:
+                return {
+                    "status": "erro",
+                    "sucesso": False,
+                    "erro": "Modo 'sobrepor_dwg' requer pelo menos 2 arquivos DWG em 'arquivos_sobreposicao'.",
+                }
+
+            res_overlay = sobrepor_dwgs_coloridos(pares, caminho_saida=caminho_saida_dwg)
+            linhas = [
+                "# SOBREPOSIÇÃO VISUAL DE DWGs NATIVOS TQS",
+                f"- **Arquivo gerado:** `{res_overlay['caminho_saida_dwg']}`\n",
+                "| Arquivo | Cor TQS | Entidades Coloridas |",
+                "| :--- | :--- | ---: |",
+            ]
+            for leg in res_overlay["legenda_cores"]:
+                linhas.append(
+                    f"| `{leg['arquivo']}` | {leg['cor_nome']} ({leg['cor_codigo']}) | {leg['entidades_coloridas']} |"
+                )
+            return {
+                "status": "sucesso",
+                "sucesso": True,
+                "resumo_executivo": "\n".join(linhas),
+                "dados_completos": res_overlay,
+                "caminho_saida_dwg": res_overlay["caminho_saida_dwg"],
+            }
+
         comparator = TQSGeometryComparator()
 
         # Caso 1: Comparação direta entre arquivos DWG
@@ -77,6 +132,13 @@ class ComparacaoFormasSkill(BaseSkill):
                 gerar_desenho_diff=gerar_desenho_diff,
                 caminho_saida_diff=caminho_saida_diff
             )
+            dwg_sobreposto = None
+            if gerar_dwg_sobreposto:
+                geos = [caminho_geo] if isinstance(caminho_geo, str) else list(caminho_geo)
+                pares = [(g, 1) for g in geos]
+                pares.append((caminho_for, 3))
+                dwg_sobreposto = sobrepor_dwgs_coloridos(pares, caminho_saida=caminho_saida_dwg)["caminho_saida_dwg"]
+
             texto_saida = resultado.para_tabela_terminal() if formato == "terminal" else resultado.para_resumo_executivo()
             return {
                 "status": "sucesso",
@@ -84,7 +146,8 @@ class ComparacaoFormasSkill(BaseSkill):
                 "tem_mudancas": resultado.tem_mudancas,
                 "resumo_executivo": texto_saida,
                 "dados_completos": resultado.para_dict(),
-                "caminho_diff_dxf": resultado.caminho_diff_dxf
+                "caminho_diff_dxf": resultado.caminho_diff_dxf,
+                "caminho_saida_dwg": dwg_sobreposto,
             }
 
         # Caso 2: Varredura de geometrias de todo o edifício

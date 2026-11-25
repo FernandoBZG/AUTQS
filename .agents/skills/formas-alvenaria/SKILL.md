@@ -43,9 +43,13 @@ Para evitar contaminação de geometria, linhas duplicadas e conflitos visuais n
 * **Nível 222:** Título oficial da prancha executiva.
 * **Nível 230 / Nível 0:** Moldura técnica oficial TQS/ABNT, carimbo/selo e marcas de dobra.
 
-### 5. Isolamento Espacial da Coluna Técnica Lateral
+### 5. Isolamento Espacial da Coluna Técnica Lateral e Corte Esquemático
 * Resumo de materiais (`LISTMELV`), Legenda de Blocos Cerâmicos e Notas Técnicas de Projeto devem ser posicionados exclusivamente na coluna lateral técnica à direita da planta útil ($X > X_{max} + 50.0$).
 * Nenhum elemento da coluna técnica pode ter coordenadas sobrepostas à área útil da planta de alvenaria.
+* **Corte Esquemático de Resistências (Prismas/Blocos/Graute):**
+  - **PROIBIÇÃO DE TEMPLATES NÃO COMPILADOS:** É terminantemente proibido inserir arquivos de template genéricos que contenham macros não compiladas (ex: `GERAIS\CORTE ESQUEMÁTICO.DWG` contendo `%Valor da cota`, `%Pavimento` ou `%COTA%`).
+  - **PRIORIDADE DA FONTE REAL COMPILADA:** O corte esquemático deve vir sempre do arquivo compilado do próprio edifício com resistências reais calculadas (ex: `ESPACIAL\FOR_Corte Esquemático com Prismas.DWG`), garantindo correspondência exata do número de pavimentos e valores de fpk/fpb/fck da obra atual (nunca dados residuais de edifícios alheios).
+  - **Enquadramento na Folha:** Deve ser inserido no quadrante lateral direito da prancha ($X \in [2250, 4100]$, $Y \in [-1500, 600]$), respeitando rigorosamente as margens da folha oficial (A0, A1, etc.) e sem colidir com as notas técnicas.
 
 ### 6. Auto-Proteção contra Leitura do Arquivo de Saída e Anti-Auto-Infecção
 * O próprio arquivo que está sendo gerado ou sobrescrito (`caminho_saida_dwg`), backups temporários (`*BKP*`, `*BAK*`) e saídas automáticas anteriores (`PRE_FOR_1aFIADA*.DWG` sem sufixo de revisão oficial `-R` ou `EP`) são sumariamente desconsiderados como candidatos de referência, evitando reimportação recursiva de dados defeituosos.
@@ -61,14 +65,16 @@ Para evitar contaminação de geometria, linhas duplicadas e conflitos visuais n
 * Apagar cotas numéricas internas modulares repetitivas (Nível 221).
 * Apagar textos de exaustão/telas antigas (Nível 7).
 
-### 9. Marcação de Shafts e Furos de Laje com 'X' (Convenção Executiva)
+### 9. Construção de Shafts e Furos de Laje com 'X' (Convenção Executiva)
 * **Shafts Retangulares:** Furos e aberturas de prumadas através da laje (hidráulica, elétrica, ventilação e ar-condicionado).
-* **Indicação Visual:** Dois traços diagonais cruzados formando um "X" conectando os vértices opostos do retângulo:
+* **PROIBIÇÃO ESTRITA DE CÓPIA EXTERNA:** É terminantemente proibido copiar ou importar desenhos de shafts de outras plantas ou pavimentos via buscas recursivas (`os.walk`). Os shafts **devem ser construídos/feitos** diretamente a partir da geometria real do próprio pavimento (`{pavimento}.DWG` ou contornos fechados de paredes de alvenaria).
+* **Indicação Visual:** Dois traços diagonais cruzados formando um "X" conectando exatamente os 4 vértices do retângulo delimitador:
   - Linha 1: $(x_{min}, y_{min}) \to (x_{max}, y_{max})$
   - Linha 2: $(x_{min}, y_{max}) \to (x_{max}, y_{min})$
 * **Camada e Cor:** **Nível 237, Cor 6 (Magenta/Ciano)**.
 * **Contorno Retangular:** O perímetro fechado do shaft também deve estar desenhado no Nível 237 (Cor 6), delimitando claramente a abertura contra os blocos de alvenaria e a laje maciça.
 * **Prevenção de Duplicatas:** Normalização de segmentos antes da inserção para garantir que o traço do "X" e as bordas ortogonais não sejam duplicados no CAD.
+* **Filtro Anti-Chevron:** Símbolos de elevação/setas de desnível em forma de chevron ($dx \le 25, dy \le 25$) jamais devem ser confundidos com diagonais de shaft.
 
 ---
 

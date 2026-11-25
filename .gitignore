@@ -37,6 +37,7 @@ wheels/
 # Arquivos temporários, registros e backups do TQS / Windows
 *.BAK
 *.bak
+*.DWG
 *.TMP
 *.tmp
 *.log
