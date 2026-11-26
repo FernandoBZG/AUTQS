@@ -71,20 +71,27 @@ class PlantaDeCargasSkill(BaseSkill):
 
 
         # 3. Passo: Geração da Prancha de Desenho com Pilares + Tabela
+        origem_cotas = kwargs.get("origem_cotas")
+        if not origem_cotas and kwargs.get("origem_x") is not None and kwargs.get("origem_y") is not None:
+            origem_cotas = (float(kwargs["origem_x"]), float(kwargs["origem_y"]))
+
         arquivo_desenho_gerado = None
         caminho_espacial_gerado = None
+        caminho_backup_gerado = None
         if gerar_desenho and len(pilares_processados) > 0:
             caminho_alvo = caminho_saida_desenho or "GABARITO.DWG"
             escala_req = kwargs.get("escala")
+
             if caminho_alvo.lower().endswith(".dwg"):
                 builder_dwg = TQSDwgPlantaDeCargasBuilder()
-                arquivo_desenho_gerado = builder_dwg.construir_planta_de_cargas(planta, caminho_alvo, escala=escala_req)
+                arquivo_desenho_gerado = builder_dwg.construir_planta_de_cargas(
+                    planta, caminho_alvo, escala=escala_req, origem_cotas=origem_cotas
+                )
             else:
                 builder_dxf = PlantaDeCargasDwgBuilder(escala=escala_req or 50)
                 arquivo_desenho_gerado = builder_dxf.construir_planta_completa(planta, caminho_alvo)
 
             # A planta de cargas SEMPRE deve ficar na pasta ESPACIAL do edifício no TQS como GABARITO.DWG
-            caminho_backup_gerado = None
             if caminho_edificio and os.path.exists(caminho_edificio) and arquivo_desenho_gerado:
                 import shutil
                 from datetime import datetime
@@ -117,12 +124,21 @@ class PlantaDeCargasSkill(BaseSkill):
                             continue
 
         # 4. Resumo estruturado para o Agente Cognitivo
+        rx_m = (origem_cotas[0] / 100.0) if ('origem_cotas' in locals() and origem_cotas) else 0.0
+        ry_m = (origem_cotas[1] / 100.0) if ('origem_cotas' in locals() and origem_cotas) else 0.0
+        rx_cm = origem_cotas[0] if ('origem_cotas' in locals() and origem_cotas) else 0.0
+        ry_cm = origem_cotas[1] if ('origem_cotas' in locals() and origem_cotas) else 0.0
+
         resumo_pilares = [
             {
                 "pilar": p.nome,
                 "secao_cm": f"{p.geometria.b:.1f}x{p.geometria.h:.1f}",
                 "xcg_m": round(p.baricentro.x / 100.0, 3) if p.baricentro else None,
                 "ycg_m": round(p.baricentro.y / 100.0, 3) if p.baricentro else None,
+                "xcg_rel_m": round((p.baricentro.x / 100.0) - rx_m, 3) if p.baricentro else None,
+                "ycg_rel_m": round((p.baricentro.y / 100.0) - ry_m, 3) if p.baricentro else None,
+                "xcg_rel_cm": round(p.baricentro.x - rx_cm, 1) if p.baricentro else None,
+                "ycg_rel_cm": round(p.baricentro.y - ry_cm, 1) if p.baricentro else None,
                 "nk_max_tf": p.esforcos.nk_max if p.esforcos else 0.0,
                 "nk_min_tf": p.esforcos.nk_min if p.esforcos else 0.0,
                 "mxk_tfm": p.esforcos.mxk if p.esforcos else 0.0,
@@ -133,6 +149,7 @@ class PlantaDeCargasSkill(BaseSkill):
             for p in pilares_processados
         ]
 
+        orig_dict = {"x_cm": float(origem_cotas[0]), "y_cm": float(origem_cotas[1])} if ('origem_cotas' in locals() and origem_cotas) else None
         resultado = {
             "status": "sucesso",
             "edificio": edificio_nome,
@@ -142,6 +159,7 @@ class PlantaDeCargasSkill(BaseSkill):
             "pavimento": pavimento_fundacao,
             "total_pilares_fundacao": len(pilares_processados),
             "pilares": resumo_pilares,
+            "origem_cotas": orig_dict,
             "dados_porlid": dados_porlid,
             "arquivo_desenho_gerado": arquivo_desenho_gerado,
         }

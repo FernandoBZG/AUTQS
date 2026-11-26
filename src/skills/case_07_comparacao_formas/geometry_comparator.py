@@ -357,9 +357,9 @@ class TQSGeometryComparator:
                     bounds_comb[3] = max(bounds_comb[3], gb[3])
 
         # 2. Extração da Forma TQS
-        p_for = Path(caminho_for)
+        path_for = Path(caminho_for)
         b_for = tuple(bounds_comb) if bounds_comb[0] != 1e9 else None
-        d_for_total = self.extrair_elementos_dwg(p_for, bounds=b_for)
+        d_for_total = self.extrair_elementos_dwg(path_for, bounds=b_for)
 
         itens_diferenca: List[DiferencaElemento] = []
 
@@ -569,18 +569,18 @@ class TQSGeometryComparator:
         caminho_dxf = None
         if gerar_desenho_diff:
             caminho_dxf = self._gerar_desenho_sobreposicao_dwg(
-                caminho_for=p_for,
+                caminho_for=path_for,
                 itens=itens_diferenca,
-                pavimento_nome=pavimento or p_for.parent.name,
+                pavimento_nome=pavimento or path_for.parent.name,
                 caminho_saida=caminho_saida_diff
             )
 
         origem_g_str = ", ".join(nomes_geos) if nomes_geos else origem_base
         return RelatorioComparacaoResultado(
             origem_base=origem_g_str,
-            origem_comparada=p_for.name,
-            pavimento_base=pavimento or p_for.parent.name,
-            pavimento_comparado=pavimento or p_for.parent.name,
+            origem_comparada=path_for.name,
+            pavimento_base=pavimento or path_for.parent.name,
+            pavimento_comparado=pavimento or path_for.parent.name,
             caminho_diff_dxf=caminho_dxf,
             itens=itens_diferenca
         )

@@ -114,10 +114,13 @@ def main():
     parser = argparse.ArgumentParser(description="AUTQS CLI - Plataforma de IA e Automação para TQS V25")
     parser.add_argument("--edificio", type=str, default=None, help="Nome ou código do edifício TQS (ex: '054' ou nome completo)")
     parser.add_argument("--desenho", type=str, default=None, help="Caminho do arquivo de desenho de saída (DWG/DXF)")
+    parser.add_argument("--origem-x", type=float, default=None, help="Coordenada X (cm) da origem (0,0) das cotas relativas")
+    parser.add_argument("--origem-y", type=float, default=None, help="Coordenada Y (cm) da origem (0,0) das cotas relativas")
     parser.add_argument("--listar", "-l", action="store_true", help="Lista todos os edifícios encontrados no sistema TQS")
     parser.add_argument("--chat", "-c", action="store_true", help="Inicia o chat interativo no terminal com o Agente AUTQS")
     parser.add_argument("--processar", "-p", nargs="?", const="portico_cargas", default=None, help="Executa o processamento do edifício no TQS (opções: 'portico_cargas' ou 'global')")
     parser.add_argument("--formas-alvenaria", action="store_true", help="Gera a Planta de Formas de Alvenaria Estrutural (1ª Fiada) executiva")
+    parser.add_argument("--geometria-ca", "--geo-ca", action="store_true", help="Gera a prancha executiva de Geometria/Formas de Concreto Armado (GEO_<PAVIMENTO>.DWG)")
     parser.add_argument("--tools", action="store_true", help="Lista as ferramentas disponíveis para o Agente de IA")
 
     # Opções do Modelador Estrutural
@@ -289,6 +292,33 @@ def main():
             print(res.get("resumo_executivo", ""))
         return
 
+    # Geração de Geometria de Concreto Armado (GEO_<PAVIMENTO>.DWG)
+    if getattr(args, "geometria_ca", False):
+        ed = args.edificio or "055"
+        pav = args.pavimento or "PISO DO SUBSOLO 1"
+        print(f"\n=========================================================")
+        print(f"   AUTQS - GEOMETRIA DE CONCRETO ARMADO (GEO)")
+        print(f"=========================================================")
+        print(f"Edifício:  {ed}")
+        print(f"Pavimento: {pav}\n")
+        res = orchestrator.registry.executar_ferramenta("gerar_geometria_concreto_armado", {
+            "edificio_nome": ed,
+            "pavimento": pav,
+            "escala": 50
+        })
+        if res.get("status") == "sucesso":
+            aud = res.get("auditoria", {})
+            print(f"[OK] GEOMETRIA DE CONCRETO ARMADO GERADA COM SUCESSO:")
+            print(f"     Arquivo:   {res.get('caminho_geo')}")
+            print(f"     Vigas:     {aud.get('total_vigas')} vigas identificadas")
+            print(f"     Elementos: {aud.get('total_elementos')} elementos gráficos")
+            print(f"     Moldura:   180-70 Nível 100 ({aud.get('moldura_elementos')} elementos)")
+            print(f"     Notas:     {aud.get('notas_elementos')} elementos de notas técnicas e legendas")
+            print(f"\nAbra o desenho diretamente no TQS (Menu Arquivo > Abrir Desenho) para visualização e plotagem.")
+        else:
+            print(f"[ERRO] Falha ao gerar geometria: {res.get('erro')}")
+        return
+
     # Geração de Planta de Formas de Alvenaria Estrutural (1ª Fiada)
     if args.formas_alvenaria:
         ed = args.edificio or "054"
@@ -310,7 +340,7 @@ def main():
             print(f"     Lajes:     {res.get('total_lajes')} identificadas e sobrepostas")
             print(f"     Vãos:      {res.get('total_vaos')} aberturas cotadas")
             print(f"     Textos:    {aud.get('total_textos')} textos normativos (h_min = {aud.get('min_text_height_papel_cm'):.2f} cm no papel)")
-            print(f"     Moldura:   A0-45 (Escala 1:{res.get('escala')})")
+            print(f"     Moldura:   {res.get('moldura')} (Escala 1:{res.get('escala')})")
             print(f"\nAbra o desenho diretamente no TQS (Menu Arquivo > Abrir Desenho) para visualização e plotagem.")
         else:
             print(f"[ERRO] Falha ao gerar formas: {res.get('erro')}")
@@ -594,19 +624,26 @@ def main():
             }
         )
 
+        planta_gerada = res.get("planta_gerada")
+
         if not res.get("sucesso"):
-            print(f"\n[FALHA] Processamento estrutural falhou:")
-            for msg in res.get("mensagens_tqs", []):
-                print(f"  * {msg}")
+            print(f"\n[FALHA] Processamento estrutural incompleto:")
             if res.get("erro"):
                 print(f"  * {res.get('erro')}")
+            for tarefa in res.get("tarefas_com_falha", []):
+                print(f"  * Tarefa não concluída: {tarefa}")
+            for pav in res.get("pavimentos_sem_vigas_dimensionadas", []):
+                print(f"  * Vigas não dimensionadas no pavimento: {pav}")
+            for msg in res.get("mensagens_tqs", []):
+                print(f"  * {msg}")
+            if planta_gerada and planta_gerada.get("sucesso"):
+                print(f"  * Planta de Cargas emitida (depende apenas do pórtico): {planta_gerada.get('caminho_dwg')}")
             return
 
         print(f"\n[SUCESSO] Processamento do edifício concluído em {res.get('duracao_segundos', 0):.1f}s!")
-        print(f"  * Pórtico Espacial e Reações: {'OK' if res.get('tem_porlis') else 'Não detectado'}")
-        print(f"  * Relatório PORLID:          {'OK' if res.get('tem_cardwg') else 'Não detectado'}")
+        print(f"  * Pórtico Espacial e Reações (PORLIS): {'OK' if res.get('tem_porlis') else 'Não detectado'}")
+        print(f"  * Cargas nos pilares (CARDWG):        {'OK' if res.get('tem_cardwg') else 'Não detectado'}")
 
-        planta_gerada = res.get("planta_gerada")
         if planta_gerada and planta_gerada.get("sucesso"):
             print(f"  * Planta de Cargas (GABARITO.DWG) emitida com sucesso!")
             print(f"    Caminho: {planta_gerada.get('caminho_dwg')}")
@@ -663,10 +700,11 @@ def main():
 
             # Geração da Prancha de Desenho
             caminho_saida = args.desenho or "GABARITO.DWG"
+            origem_cotas = (args.origem_x, args.origem_y) if (args.origem_x is not None and args.origem_y is not None) else None
             if caminho_saida.lower().endswith(".dwg"):
                 from src.drawing.tqs_dwg_builder import TQSDwgPlantaDeCargasBuilder
                 builder = TQSDwgPlantaDeCargasBuilder()
-                arquivo_gerado = builder.construir_planta_de_cargas(planta, caminho_saida)
+                arquivo_gerado = builder.construir_planta_de_cargas(planta, caminho_saida, origem_cotas=origem_cotas)
             else:
                 from src.drawing.sheet_builder import PlantaDeCargasDwgBuilder
                 builder = PlantaDeCargasDwgBuilder(escala=50)

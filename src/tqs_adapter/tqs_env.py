@@ -96,6 +96,27 @@ def configurar_ambiente_tqs_64() -> Tuple[str, str, str]:
     except Exception:
         pass
 
+    # 6. Corrige o setter de nível da classe TQSDwg.Draw para usar g_desniv em níveis numéricos.
+    # No binding nativo do TQS, dwg.draw.level chama g_desnivalfa, o que falha silenciosamente
+    # para níveis numéricos (ex: 3, 9, 12, 21, 100, 222, 250), desenhando tudo no nível 0.
+    try:
+        from TQS import TQSDwg
+        import ctypes
+
+        def _set_dwg_level(self, level):
+            parpedmv = ctypes.c_void_p(self.m_dwg.m_pedmv)
+            try:
+                parnivel = ctypes.c_int(int(level))
+                self.m_dwg.m_mdwg.g_desniv(parpedmv, ctypes.byref(parnivel))
+            except (ValueError, TypeError):
+                parlevel = ctypes.c_char_p(str(level).encode('latin1'))
+                nivel = ctypes.c_int(0)
+                self.m_dwg.m_mdwg.g_desnivalfa(parpedmv, parlevel, ctypes.byref(nivel))
+
+        TQSDwg.Draw.level = property(TQSDwg.Draw.level.fget, _set_dwg_level)
+    except Exception:
+        pass
+
     return pasta_x64, pasta_suporte, pasta_usuario
 
 # Inicializa o ambiente ao importar o módulo

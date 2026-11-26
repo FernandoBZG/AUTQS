@@ -110,3 +110,15 @@ Sempre que a comparação detectar alterações, alerte o engenheiro sobre as se
    - Cada centímetro adicional de concreto armado adiciona $25\text{ kgf/m}^2$ de peso próprio permanente na estrutura.
 4. **Eliminação de Vigas de Apoio:**
    - Transforma vãos simples em lajes contínuas ou balanços, exigindo recálculo imediato da grelha de lajes.
+
+---
+
+## 🎨 Sobreposição Visual Nativa de DWGs por Cores (`sobrepor_dwg`) — Padrão Oficial
+
+> [!IMPORTANT]
+> **Apenas DWG TQS e Padrão de Cores:** Por preferência do usuário, gere **somente arquivos `.DWG` nativos do TQS** (`gerar_dwg_sobreposto=True`, `gerar_desenho_diff=False`), salvos na **respectiva pasta de cada pavimento**. Na sobreposição, **a planta de geometria (`Geo_*`, `BL1`, `BL2`) é SEMPRE Vermelha (`cor=1`)** e **a planta de formas (`FOR*.DWG`) é SEMPRE Verde (`cor=3`)**.
+
+Além da auditoria geométrica analítica, a skill incorpora a **sobreposição visual direta de 2 ou mais arquivos `.DWG` nativos do TQS** (`src/skills/case_07_comparacao_formas/dwg_overlay.py`):
+- Altera a cor de todas as entidades de cada arquivo com `TQSDwg.edit.ModifyColor` (códigos TQS `0..15`: `1=Vermelho`, `3=Verde`, `4=Ciano`, `8=Cinza`, etc.).
+- Mescla os desenhos na origem `(0, 0)` com `TQSDwg.draw.DwgMix`, preservando 100% das entidades nativas (textos, cotas, blocos, alvenarias e hachuras) em um único `COMPARACAO_*.DWG`.
+- **Uso via skill:** `modo="sobrepor_dwg"`, `arquivos_sobreposicao=[{"caminho": "A.DWG", "cor": "cinza"}, {"caminho": "B.DWG", "cor": "verde"}]`, `caminho_saida_dwg="..."` (ou `gerar_dwg_sobreposto=True` no modo `dwg`).

@@ -303,6 +303,32 @@ class TQSBuildingReader:
                 res_porlid = porlid_reader.extrair_tabela_porlid()
                 if res_porlid.get("sucesso", False):
                     dados_porlid = res_porlid
+                    # Atualiza os esforços de cada pilar diretamente a partir do relatório oficial PORLID
+                    if dados_porlid.get("linhas"):
+                        mapa_porlid = {str(row[0]).strip().upper(): row for row in dados_porlid["linhas"]}
+                        for p in pilares:
+                            nome_p = p.nome.strip().upper()
+                            if nome_p in mapa_porlid:
+                                row = mapa_porlid[nome_p]
+                                try:
+                                    fz = float(row[1])
+                                    fx = float(row[2])
+                                    fy = float(row[3])
+                                    mx = float(row[4])
+                                    my = float(row[5])
+                                    mz = float(row[6])
+                                    p.esforcos = EsforcosFundacao(
+                                        nk_max=fz,
+                                        nk_min=fz * 0.85,
+                                        mxk=mx,
+                                        myk=my,
+                                        mz=mz,
+                                        hx=fx,
+                                        hy=fy,
+                                        caso_critico=dados_porlid.get("titulo", "PORLID (TQS Oficial)"),
+                                    )
+                                except (ValueError, IndexError):
+                                    pass
         except Exception:
             dados_porlid = None
 

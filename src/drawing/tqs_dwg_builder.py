@@ -10,6 +10,34 @@ from src.core.models import PlantaDeCargasModel, PilarFundacao
 # Garante ambiente TQS 64-bit configurado
 configurar_ambiente_tqs_64()
 
+def _corrigir_tqs_draw_level():
+    """
+    Garante que dwg.draw.level utilize g_desniv para níveis numéricos (0..255),
+    evitando que g_desnivalfa falhe e descarte os elementos para o nível 0.
+    """
+    try:
+        def _set_dwg_level(self, level):
+            parpedmv = ctypes.c_void_p(self.m_dwg.m_pedmv)
+            try:
+                parnivel = ctypes.c_int(int(level))
+                self.m_dwg.m_mdwg.g_desniv(parpedmv, ctypes.byref(parnivel))
+            except (ValueError, TypeError):
+                parlevel = ctypes.c_char_p(str(level).encode('latin1'))
+                nivel = ctypes.c_int(0)
+                self.m_dwg.m_mdwg.g_desnivalfa(parpedmv, parlevel, ctypes.byref(nivel))
+
+        TQSDwg.Draw.level = property(TQSDwg.Draw.level.fget, _set_dwg_level)
+    except Exception:
+        pass
+
+_corrigir_tqs_draw_level()
+
+# Área do selo nas molduras oficiais do TQS (C:\TQSW\SUPORTE\NGE\MOLDURAS, A0-45, A1, 180-50...):
+# largura de 17.5 cm encostada na margem direita; altura da margem inferior (y=1.0) até o topo
+# da tabela de revisões (y=29.7, Nível 221), ou seja, carimbo + tabela de revisões = 28.7 cm.
+SELO_LARGURA_CM = 17.5
+SELO_ALTURA_CM = 28.7
+
 # Catálogo oficial de formatos/molduras padronizados do TQS (D:\TQSW\SUPORTE\NGE\MOLDURAS)
 # Todos os arquivos .DWG abaixo existem na instalação nativa do TQS. Largura máxima é rigorosamente 180.0 cm.
 # (Nome, Largura_papel_cm, Altura_papel_cm)
@@ -180,6 +208,7 @@ class TQSDwgPlantaDeCargasBuilder:
         planta: PlantaDeCargasModel,
         arquivo_saida_dwg: str,
         escala: Optional[int] = None,
+        origem_cotas: Optional[Tuple[float, float]] = None,
     ) -> str:
         """
         Gera a folha .DWG nativa do TQS adaptada automaticamente a qualquer edifício.
@@ -252,24 +281,28 @@ class TQSDwgPlantaDeCargasBuilder:
             for p in posicoes:
                 dwg.edit.Erase(p)
 
-        # Configura no cabeçalho nativo do DWG a escala oficial e tamanho das cotas
+        # Configura no cabeçalho nativo do DWG o sistema/subsistema Formas -> Planta de formas
+        dwg.settings.systemId = 2  # Formas (IEDFOR)
+        dwg.settings.subSystemId = 2  # Planta de formas
         dwg.settings.scale = float(escala)
         dwg.dim.dimtxt = 0.20
 
-        # Redefine a origem das cotas relativas (IPOCOTREL) para a origem global (0, 0, 0)
+        # Redefine a origem das cotas relativas (IPOCOTREL) para a origem especificada (ou 0, 0, 0)
+        rx = float(origem_cotas[0]) if origem_cotas else 0.0
+        ry = float(origem_cotas[1]) if origem_cotas else 0.0
         if self._mdwg_dll is not None and hasattr(dwg, "m_pedmv") and dwg.m_pedmv:
             try:
                 self._mdwg_dll.g_edmexdefcotrel(
                     ctypes.c_void_p(dwg.m_pedmv),
-                    ctypes.c_double(0.0),
-                    ctypes.c_double(0.0),
+                    ctypes.c_double(rx),
+                    ctypes.c_double(ry),
                     ctypes.c_double(0.0),
                 )
             except Exception:
                 pass
 
         # 3. Desenha a Planta de Locação dos Pilares nas suas coordenadas originais
-        self._desenhar_pilares_locacao(dwg, planta.pilares, bounds_planta, escala=escala)
+        self._desenhar_pilares_locacao(dwg, planta.pilares, bounds_planta, escala=escala, origem_cotas=origem_cotas)
 
         # 4. Disposição Inteligente das Tabelas para Enquadramento em Molduras Padrão TQS
         w_bar_est = 735.0 * fator_esc
@@ -310,7 +343,7 @@ class TQSDwgPlantaDeCargasBuilder:
             # 1. Tabela de Baricentros
             x_bar = x_base
             y_fim_bar, larg_tabela_bar = self._desenhar_tabela_baricentros(
-                dwg, planta.pilares, x_start=x_bar, y_start=y_topo_tabelas, escala=escala
+                dwg, planta.pilares, x_start=x_bar, y_start=y_topo_tabelas, escala=escala, origem_cotas=origem_cotas
             )
 
             # 2. Tabela de Cargas (ao lado da de baricentros)
@@ -327,7 +360,7 @@ class TQSDwgPlantaDeCargasBuilder:
             # 3. Notas, Convenção de Sinais e Legenda (ao lado da de cargas)
             x_notas = x_cargas + larg_tabela_cargas + espaco_inter
             y_fim_notas = self._desenhar_notas_e_legendas(
-                dwg, x_start=x_notas, y_start=y_topo_tabelas, dados_porlid=planta.dados_porlid, escala=escala
+                dwg, x_start=x_notas, y_start=y_topo_tabelas, dados_porlid=planta.dados_porlid, escala=escala, origem_cotas=origem_cotas
             )
 
             larg_notas_real = 2700.0 * fator_esc
@@ -352,7 +385,7 @@ class TQSDwgPlantaDeCargasBuilder:
             # 1. Tabela de Baricentros (coluna 1 da direita)
             x_bar = x_start_dir
             y_fim_bar, larg_tabela_bar = self._desenhar_tabela_baricentros(
-                dwg, planta.pilares, x_start=x_bar, y_start=y_topo_tabelas, escala=escala
+                dwg, planta.pilares, x_start=x_bar, y_start=y_topo_tabelas, escala=escala, origem_cotas=origem_cotas
             )
 
             # 2. Tabela de Cargas (coluna 2 da direita, alinhada no topo com Baricentros)
@@ -370,7 +403,7 @@ class TQSDwgPlantaDeCargasBuilder:
             y_topo_notas = min(y_fim_bar, y_fim_cargas) - (70.0 * fator_esc)
             x_notas = x_start_dir
             y_fim_notas = self._desenhar_notas_e_legendas(
-                dwg, x_start=x_notas, y_start=y_topo_notas, dados_porlid=planta.dados_porlid, escala=escala
+                dwg, x_start=x_notas, y_start=y_topo_notas, dados_porlid=planta.dados_porlid, escala=escala, origem_cotas=origem_cotas
             )
 
             larg_notas_real = 2700.0 * fator_esc
@@ -394,6 +427,11 @@ class TQSDwgPlantaDeCargasBuilder:
         pasta_destino = os.path.dirname(arquivo_saida_dwg)
         if pasta_destino and not os.path.exists(pasta_destino):
             os.makedirs(pasta_destino, exist_ok=True)
+
+        # Garante propriedades do desenho: Formas -> Planta de formas
+        dwg.settings.systemId = 2  # Formas (IEDFOR)
+        dwg.settings.subSystemId = 2  # Planta de formas
+        dwg.settings.scale = float(escala_final or escala)
 
         dwg.file.SaveAs(arquivo_saida_dwg)
         dwg.file.Close()
@@ -501,6 +539,7 @@ class TQSDwgPlantaDeCargasBuilder:
         pilares: List[PilarFundacao],
         bounds: Tuple[float, float, float, float],
         escala: int = 50,
+        origem_cotas: Optional[Tuple[float, float]] = None,
     ):
         """
         Desenha cada pilar em suas coordenadas espaciais reais:
@@ -701,8 +740,12 @@ class TQSDwgPlantaDeCargasBuilder:
             if not criou_nativo:
                 h_cota = max(13.5 * fator_esc, h_min_normativo)
                 # Fallback vetorial idêntico caso IPOCOTREL.dll não esteja acessível no ambiente
+                rx = float(origem_cotas[0]) if origem_cotas else 0.0
+                ry = float(origem_cotas[1]) if origem_cotas else 0.0
                 if emitir_cota_y:
-                    val_y_num = round(cg.y, 1)
+                    val_y_num = round(cg.y - ry, 1)
+                    if abs(val_y_num) < 1e-4:
+                        val_y_num = 0.0
                     val_y_str = f"{val_y_num:.1f}".rstrip("0").rstrip(".") if "." in f"{val_y_num:.1f}" else f"{val_y_num:.0f}"
                     # Triângulo indicador apontando para baixo sobre a linha horizontal
                     dwg.draw.Line(xv_y, yv_y, xv_y + (7.5 * fator_esc), yv_y + (15.0 * fator_esc))
@@ -717,7 +760,9 @@ class TQSDwgPlantaDeCargasBuilder:
                     dwg.draw.Text(xv_y, yv_y + (22.5 * fator_esc) + (3.4 * fator_esc), h_cota, 0.0, val_y_str)
 
                 if emitir_cota_x:
-                    val_x_num = round(cg.x, 1)
+                    val_x_num = round(cg.x - rx, 1)
+                    if abs(val_x_num) < 1e-4:
+                        val_x_num = 0.0
                     val_x_str = f"{val_x_num:.1f}".rstrip("0").rstrip(".") if "." in f"{val_x_num:.1f}" else f"{val_x_num:.0f}"
                     # Triângulo indicador apontando para a direita sobre a linha vertical
                     dwg.draw.Line(xv_x, yv_x, xv_x - (15.0 * fator_esc), yv_x + (7.5 * fator_esc))
@@ -745,6 +790,22 @@ class TQSDwgPlantaDeCargasBuilder:
             dim_str = f"{int(round(geom.b))}x{int(round(geom.h))}"
             dwg.draw.Text(xd, yd, h_pilar_dim, 0.0, dim_str)
 
+        # 5. Marcador de Origem (0,0) na planta de locação se especificado
+        if origem_cotas:
+            rx = float(origem_cotas[0])
+            ry = float(origem_cotas[1])
+            # Eixos em cruz (Nível 21)
+            dwg.draw.level = 21
+            tam_cruz = 50.0 * fator_esc
+            dwg.draw.Line(rx - tam_cruz, ry, rx + tam_cruz, ry)
+            dwg.draw.Line(rx, ry - tam_cruz, rx, ry + tam_cruz)
+            dwg.draw.Circle(rx, ry, 12.0 * fator_esc)
+            dwg.draw.Circle(rx, ry, 4.0 * fator_esc)
+            # Texto identificador da Origem
+            dwg.draw.level = 250
+            h_orig_txt = max(14.0 * fator_esc, h_min_normativo)
+            dwg.draw.Text(rx + (16.0 * fator_esc), ry + (8.0 * fator_esc), h_orig_txt, 0.0, "ORIGEM (0,0)")
+
     def _desenhar_tabela_baricentros(
         self,
         dwg: TQSDwg.Dwg,
@@ -752,6 +813,7 @@ class TQSDwgPlantaDeCargasBuilder:
         x_start: float,
         y_start: float,
         escala: int = 50,
+        origem_cotas: Optional[Tuple[float, float]] = None,
     ) -> Tuple[float, float]:
         """
         Desenha as DUAS tabelas de baricentros de pilares lado a lado:
@@ -843,11 +905,13 @@ class TQSDwgPlantaDeCargasBuilder:
         # TABELA 1: ORDENADO POR COORDENADAS
         # =====================================================================
         # Linhas horizontais do cabeçalho
+        dwg.draw.level = 221
         dwg.draw.Line(x1_0, y_top_bar, x1_1, y_top_bar)
         dwg.draw.Line(x1_0, y_grid_topo, x1_1, y_grid_topo)
         dwg.draw.Line(x1_0, y_dados_topo, x1_1, y_dados_topo)
 
-        # Textos de título da Tabela 1 rigorosamente centralizados e contidos na caixa
+        # Textos de título da Tabela 1 rigorosamente centralizados e contidos na caixa (Nível 250)
+        dwg.draw.level = 250
         tit1 = "BARICENTRO DE PILARES"
         w_tit1 = len(tit1) * h_txt_tit  # 21 * 14.0 = 294.0 cm
         x_tit1 = x1_0 + ((largura_tab1 - w_tit1) / 2.0)
@@ -858,7 +922,8 @@ class TQSDwgPlantaDeCargasBuilder:
         x_sub1 = x1_0 + ((largura_tab1 - w_sub1) / 2.0)
         dwg.draw.Text(x_sub1, y_top_bar - (37.0 * fator_esc), h_txt_sub, 0.0, sub1)
 
-        # Textos dos cabeçalhos das colunas da Tabela 1
+        # Textos dos cabeçalhos das colunas da Tabela 1 (Nível 221)
+        dwg.draw.level = 221
         col_x = x1_0
         for c, col_nome in enumerate(["PILAR", "X (cm)", "PILAR", "Y (cm)"]):
             cw = larguras_tab1[c]
@@ -871,6 +936,7 @@ class TQSDwgPlantaDeCargasBuilder:
             col_x += cw
 
         # Linhas verticais externas (toda a altura da tabela)
+        dwg.draw.level = 221
         dwg.draw.Line(x1_0, y_top_bar, x1_0, y_fim)
         dwg.draw.Line(x1_1, y_top_bar, x1_1, y_fim)
 
@@ -884,15 +950,25 @@ class TQSDwgPlantaDeCargasBuilder:
         curr_y = y_dados_topo
         for i in range(n_total):
             curr_y -= h_linha
+            dwg.draw.level = 221
             dwg.draw.Line(x1_0, curr_y, x1_1, curr_y)
 
+            rx = float(origem_cotas[0]) if origem_cotas else 0.0
+            ry = float(origem_cotas[1]) if origem_cotas else 0.0
             px = p_ord_x[i]
             py = p_ord_y[i]
             nome_px = str(px.nome)
-            val_x = f"{px.baricentro.x:.1f}" if px.baricentro else "0.0"
+            vx = (px.baricentro.x - rx) if px.baricentro else 0.0
+            if abs(vx) < 1e-4:
+                vx = 0.0
+            val_x = f"{vx:.1f}"
             nome_py = str(py.nome)
-            val_y = f"{py.baricentro.y:.1f}" if py.baricentro else "0.0"
+            vy = (py.baricentro.y - ry) if py.baricentro else 0.0
+            if abs(vy) < 1e-4:
+                vy = 0.0
+            val_y = f"{vy:.1f}"
 
+            dwg.draw.level = 0
             # Coluna 0: PILAR (ord X) - Alinhado à esquerda com margem +15.0 cm
             c0_x = x1_0
             dwg.draw.Text(c0_x + (15.0 * fator_esc), curr_y + (6.0 * fator_esc), h_txt_dados, 0.0, nome_px)
@@ -915,11 +991,13 @@ class TQSDwgPlantaDeCargasBuilder:
         # TABELA 2: ORDENADO POR PILARES
         # =====================================================================
         # Linhas horizontais do cabeçalho
+        dwg.draw.level = 221
         dwg.draw.Line(x2_0, y_top_bar, x2_1, y_top_bar)
         dwg.draw.Line(x2_0, y_grid_topo, x2_1, y_grid_topo)
         dwg.draw.Line(x2_0, y_dados_topo, x2_1, y_dados_topo)
 
-        # Textos de título da Tabela 2 rigorosamente centralizados e contidos na caixa
+        # Textos de título da Tabela 2 rigorosamente centralizados e contidos na caixa (Nível 250)
+        dwg.draw.level = 250
         tit2 = "BARICENTRO DE PILARES"
         w_tit2 = len(tit2) * h_txt_tit  # 21 * 14.0 = 294.0 cm
         x_tit2 = x2_0 + ((largura_tab2 - w_tit2) / 2.0)
@@ -930,7 +1008,8 @@ class TQSDwgPlantaDeCargasBuilder:
         x_sub2 = x2_0 + ((largura_tab2 - w_sub2) / 2.0)
         dwg.draw.Text(x_sub2, y_top_bar - (37.0 * fator_esc), h_txt_sub, 0.0, sub2)
 
-        # Textos dos cabeçalhos das colunas da Tabela 2
+        # Textos dos cabeçalhos das colunas da Tabela 2 (Nível 221)
+        dwg.draw.level = 221
         col_x = x2_0
         for c, col_nome in enumerate(["PILAR", "X (cm)", "Y (cm)"]):
             cw = larguras_tab2[c]
@@ -943,6 +1022,7 @@ class TQSDwgPlantaDeCargasBuilder:
             col_x += cw
 
         # Linhas verticais externas (toda a altura da tabela)
+        dwg.draw.level = 221
         dwg.draw.Line(x2_0, y_top_bar, x2_0, y_fim)
         dwg.draw.Line(x2_1, y_top_bar, x2_1, y_fim)
 
@@ -956,13 +1036,21 @@ class TQSDwgPlantaDeCargasBuilder:
         curr_y = y_dados_topo
         for i in range(n_total):
             curr_y -= h_linha
+            dwg.draw.level = 221
             dwg.draw.Line(x2_0, curr_y, x2_1, curr_y)
 
             p = p_ord_nome[i]
             nome_p = str(p.nome)
-            val_x = f"{p.baricentro.x:.1f}" if p.baricentro else "0.0"
-            val_y = f"{p.baricentro.y:.1f}" if p.baricentro else "0.0"
+            vx = (p.baricentro.x - rx) if p.baricentro else 0.0
+            if abs(vx) < 1e-4:
+                vx = 0.0
+            val_x = f"{vx:.1f}"
+            vy = (p.baricentro.y - ry) if p.baricentro else 0.0
+            if abs(vy) < 1e-4:
+                vy = 0.0
+            val_y = f"{vy:.1f}"
 
+            dwg.draw.level = 0
             # Coluna 0: PILAR - Alinhado à esquerda com margem +15.0 cm
             c0_x = x2_0
             dwg.draw.Text(c0_x + (15.0 * fator_esc), curr_y + (6.0 * fator_esc), h_txt_dados, 0.0, nome_p)
@@ -1030,7 +1118,7 @@ class TQSDwgPlantaDeCargasBuilder:
 
             # Subtítulo Geral
             y_subtitulo = y_titulo - (26.0 * fator_esc)
-            dwg.draw.level = 0
+            dwg.draw.level = 250
             h_txt_sub = max(13.5 * fator_esc, h_min_normativo)
             dwg.draw.Text(
                 x_start + max(10.0 * fator_esc, (largura_total / 2.0) - (260.0 * fator_esc)),
@@ -1049,13 +1137,13 @@ class TQSDwgPlantaDeCargasBuilder:
                 linhas_caso = caso.get("linhas", [])
                 max_linhas = max(max_linhas, len(linhas_caso))
 
-                # Nome do Caso (ex: 'CASO 1 - FZ MAX') acima da grade de cada bloco
+                # Nome do Caso (ex: 'CASO 1 - FZ MAX') acima da grade de cada bloco (Nível 222)
                 dwg.draw.level = 222
                 nome_caso = caso.get("nome", f"CASO {k+1}")
                 h_txt_caso = max(14.0 * fator_esc, h_min_normativo)
                 dwg.draw.Text(bx0 + (10.0 * fator_esc), by0 + (10.0 * fator_esc), h_txt_caso, 0.0, nome_caso)
 
-                dwg.draw.level = 0
+                dwg.draw.level = 221
                 # Linha superior do cabeçalho
                 dwg.draw.Line(bx0, by0, bx0 + largura_bloco, by0)
                 # Linha intermediária (separa grandezas de unidades nas colunas de esforços)
@@ -1063,7 +1151,7 @@ class TQSDwgPlantaDeCargasBuilder:
                 # Linha inferior do cabeçalho
                 dwg.draw.Line(bx0, by0 - h_cabecalho, bx0 + largura_bloco, by0 - h_cabecalho)
 
-                # Textos do cabeçalho com altura mínima normativa de 0.20 cm no papel
+                # Textos do cabeçalho com altura mínima normativa de 0.20 cm no papel (Nível 221)
                 h_txt_c0 = 0.20 * escala
                 h_txt_cab = 0.20 * escala
                 h_txt_un = 0.20 * escala
@@ -1074,7 +1162,7 @@ class TQSDwgPlantaDeCargasBuilder:
                     dwg.draw.Text(bx0 + ox + (w / 2.0) - (12.0 * fator_esc), by0 - (32.0 * fator_esc), h_txt_un, 0.0, un)
                     ox += w
 
-                # Linhas verticais do bloco
+                # Linhas verticais do bloco (Nível 221)
                 altura_tabela = h_cabecalho + len(linhas_caso) * h_linha
                 dwg.draw.Line(bx0, by0, bx0, by0 - altura_tabela)
                 cx = bx0
@@ -1087,9 +1175,11 @@ class TQSDwgPlantaDeCargasBuilder:
                 h_txt_dados = 0.20 * escala
                 for row in linhas_caso:
                     curr_y -= h_linha
+                    dwg.draw.level = 221
                     dwg.draw.Line(bx0, curr_y, bx0 + largura_bloco, curr_y)
 
-                    # Coluna Pilar / Elem
+                    # Coluna Pilar / Elem (Nível 0)
+                    dwg.draw.level = 0
                     dwg.draw.Text(bx0 + (15.0 * fator_esc), curr_y + (6.0 * fator_esc), h_txt_dados, 0.0, str(row[0]))
 
                     # Colunas de Esforços Fz, Fx, Fy, Mx, My, Mz
@@ -1140,15 +1230,15 @@ class TQSDwgPlantaDeCargasBuilder:
 
         largura_total = num_colunas * largura_bloco + (num_colunas - 1) * espaco_entre_blocos
 
-        # Título Geral da Tabela de Cargas (com espaçamento seguro abaixo da tabela superior)
+        # Título Geral da Tabela de Cargas (Nível 250)
         y_titulo = y_start
         dwg.draw.level = 250
         h_txt_tit2 = max(18.0 * fator_esc, h_min_normativo)
         dwg.draw.Text(x_start + (largura_total / 2.0) - (200.0 * fator_esc), y_titulo, h_txt_tit2, 0.0, "TABELA DE CARGAS NAS FUNDAÇÕES")
 
-        # Subtítulo (Combinação crítica oficial do TQS)
+        # Subtítulo (Combinação crítica oficial do TQS - Nível 250)
         y_subtitulo = y_titulo - (28.0 * fator_esc)
-        dwg.draw.level = 0
+        dwg.draw.level = 250
         tam_fonte_sub = max((13.0 if len(titulo_comb) > 40 else 15.0) * fator_esc, h_min_normativo)
         dwg.draw.Text(x_start + max(10.0 * fator_esc, (largura_total / 2.0) - (len(titulo_comb) * (3.8 * fator_esc))), y_subtitulo, tam_fonte_sub, 0.0, titulo_comb)
 
@@ -1163,7 +1253,7 @@ class TQSDwgPlantaDeCargasBuilder:
             bx0 = x_start + col_idx * (largura_bloco + espaco_entre_blocos)
             by0 = y_grid_topo
 
-            dwg.draw.level = 0
+            dwg.draw.level = 221
             # Linha superior do cabeçalho
             dwg.draw.Line(bx0, by0, bx0 + largura_bloco, by0)
             # Linha intermediária (separa grandezas de unidades nas colunas de esforços)
@@ -1171,7 +1261,7 @@ class TQSDwgPlantaDeCargasBuilder:
             # Linha inferior do cabeçalho
             dwg.draw.Line(bx0, by0 - h_cabecalho, bx0 + largura_bloco, by0 - h_cabecalho)
 
-            # Textos do cabeçalho com altura mínima normativa de 0.20 cm no papel
+            # Textos do cabeçalho com altura mínima normativa de 0.20 cm no papel (Nível 221)
             h_txt_c0 = 0.20 * escala
             h_txt_cab = 0.20 * escala
             h_txt_un = 0.20 * escala
@@ -1182,7 +1272,7 @@ class TQSDwgPlantaDeCargasBuilder:
                 dwg.draw.Text(bx0 + ox + (w / 2.0) - (12.0 * fator_esc), by0 - (32.0 * fator_esc), h_txt_un, 0.0, un)
                 ox += w
 
-            # Linhas verticais do bloco
+            # Linhas verticais do bloco (Nível 221)
             altura_tabela = h_cabecalho + len(sub_linhas) * h_linha
             dwg.draw.Line(bx0, by0, bx0, by0 - altura_tabela)
             cx = bx0
@@ -1195,14 +1285,20 @@ class TQSDwgPlantaDeCargasBuilder:
             h_txt_dados = 0.20 * escala
             for row in sub_linhas:
                 curr_y -= h_linha
+                dwg.draw.level = 221
                 dwg.draw.Line(bx0, curr_y, bx0 + largura_bloco, curr_y)
 
-                # Coluna Elem
+                # Coluna Elem (Nível 0)
+                dwg.draw.level = 0
                 dwg.draw.Text(bx0 + (15.0 * fator_esc), curr_y + (6.0 * fator_esc), h_txt_dados, 0.0, str(row[0]))
 
                 # Colunas de Esforços Fz, Fx, Fy, Mx, My, Mz
                 ox = larguras[0]
                 for w, val in zip(larguras[1:], row[1:]):
+                    val_str = str(val).strip()
+                    text_offset = max(10.0 * fator_esc, (w / 2.0) - (len(val_str) * (3.5 * fator_esc)))
+                    dwg.draw.Text(bx0 + ox + text_offset, curr_y + (6.0 * fator_esc), h_txt_dados, 0.0, val_str)
+                    ox += w
                     val_str = str(val).strip()
                     text_offset = max(10.0 * fator_esc, (w / 2.0) - (len(val_str) * (3.5 * fator_esc)))
                     dwg.draw.Text(bx0 + ox + text_offset, curr_y + (6.0 * fator_esc), h_txt_dados, 0.0, val_str)
@@ -1218,6 +1314,7 @@ class TQSDwgPlantaDeCargasBuilder:
         y_start: float,
         dados_porlid: Optional[Dict[str, Any]] = None,
         escala: int = 50,
+        origem_cotas: Optional[Tuple[float, float]] = None,
     ) -> float:
         """
         Desenha os 3 blocos informativos rigorosamente iguais ao modelo GEO_CARGAS do Zuckhan Soledade:
@@ -1251,7 +1348,20 @@ class TQSDwgPlantaDeCargasBuilder:
         dwg.draw.Text(x_start, curr_y, h_txt, 0.0, "- Esforços com valores característicos.")
         curr_y -= dy_linha
 
-        dwg.draw.level = 0
+        if origem_cotas:
+            rx = float(origem_cotas[0])
+            ry = float(origem_cotas[1])
+            dwg.draw.level = 250
+            dwg.draw.Text(
+                x_start,
+                curr_y,
+                h_txt,
+                0.0,
+                f"- Origem (0,0) das cotas e coordenadas de locação referenciada ao ponto (X={rx:.1f}, Y={ry:.1f}) cm.",
+            )
+            curr_y -= dy_linha
+
+        dwg.draw.level = 250
         dwg.draw.Text(
             x_start,
             curr_y,
@@ -1285,7 +1395,7 @@ class TQSDwgPlantaDeCargasBuilder:
                 else:
                     desc = f"combinação dos carregamentos: {c.get('titulo') or c.get('nome')}"
 
-                dwg.draw.level = 0
+                dwg.draw.level = 250
                 dwg.draw.Text(x_start, curr_y, h_txt, 0.0, f"- Caso {cid}: {desc}")
                 curr_y -= dy_linha
 
@@ -1299,7 +1409,7 @@ class TQSDwgPlantaDeCargasBuilder:
                 curr_y -= dy_linha
         else:
             # Fallback caso clássico padrão caso não haja PORLID detalhado
-            dwg.draw.level = 0
+            dwg.draw.level = 250
             dwg.draw.Text(
                 x_start,
                 curr_y,
@@ -1318,7 +1428,7 @@ class TQSDwgPlantaDeCargasBuilder:
             curr_y -= dy_linha
 
         # Linhas de rodapé fixas
-        dwg.draw.level = 0
+        dwg.draw.level = 250
         dwg.draw.Text(
             x_start,
             curr_y,
@@ -1363,7 +1473,7 @@ class TQSDwgPlantaDeCargasBuilder:
             y_conv = y_start
             for e in blocos_data.get("convencao", []):
                 etype = e.get("type")
-                dwg.draw.level = e.get("level", 0)
+                dwg.draw.level = e.get("level", 250)
                 if etype == "line":
                     dwg.draw.Line(
                         x_conv + (e["dx1"] * fator_esc),
@@ -1393,7 +1503,7 @@ class TQSDwgPlantaDeCargasBuilder:
             y_vento = y_start + (1.68 * fator_esc)
             for e in blocos_data.get("vento", []):
                 etype = e.get("type")
-                dwg.draw.level = e.get("level", 0)
+                dwg.draw.level = e.get("level", 250)
                 if etype == "line":
                     dwg.draw.Line(
                         x_vento + (e["dx1"] * fator_esc),
@@ -1423,9 +1533,9 @@ class TQSDwgPlantaDeCargasBuilder:
             x_conv_loc = x_start
             for e in blocos_data.get("convencoes_locacao", []):
                 etype = e.get("type")
-                dwg.draw.level = e.get("level", 0)
-                if "color" in e:
-                    dwg.draw.color = e["color"]
+                dwg.draw.level = e.get("level", 221)
+                # Cor do nível (-1): a cor gravada no JSON é a cor resolvida, não deve virar cor fixa
+                dwg.draw.color = -1
                 if etype == "line":
                     dwg.draw.Line(
                         x_conv_loc + (e["dx1"] * fator_esc),
@@ -1456,8 +1566,8 @@ class TQSDwgPlantaDeCargasBuilder:
                         e["radius"] * fator_esc,
                     )
 
-            # Restaura cor padrão ByLevel
-            dwg.draw.color = 0
+            # Restaura cor do nível (ByLevel = -1)
+            dwg.draw.color = -1
             y_fim = y_conv_loc - (495.0 * fator_esc)
             return y_fim
 
@@ -1531,18 +1641,18 @@ class TQSDwgPlantaDeCargasBuilder:
         my1 = h_proj - (1.0 * escala)
 
         # Área reservada para o selo no canto inferior direito (apenas demarcação, sem detalhes de carimbo)
-        larg_selo = 17.5 * escala
-        alt_selo = 14.85 * escala  # Módulo A4 meio (14.85 cm)
+        larg_selo = SELO_LARGURA_CM * escala
+        alt_selo = SELO_ALTURA_CM * escala  # Carimbo + tabela de revisões
         sx0 = mx1 - larg_selo
         sy1 = my0 + alt_selo
 
-        # Criação do Bloco de Projeção da Moldura (Nível 100, Cor 37 - Padrão TQS não plotável)
+        # Criação do Bloco de Projeção da Moldura (Nível 100, cor do nível)
         dwg.draw.level = 100
-        dwg.draw.color = 37
+        dwg.draw.color = -1
 
         dwg.draw.BlockOpen(formato_selecionado, 0.0, 0.0)
         dwg.draw.level = 100
-        dwg.draw.color = 37
+        dwg.draw.color = -1
 
         # 1. Borda externa do papel
         dwg.draw.Line(0.0, 0.0, w_proj, 0.0)
@@ -1582,11 +1692,11 @@ class TQSDwgPlantaDeCargasBuilder:
 
         # Inserção do bloco no ponto (x0, y0) da prancha no Nível 100
         dwg.draw.level = 100
-        dwg.draw.color = 37
+        dwg.draw.color = -1
         dwg.draw.BlockInsert(formato_selecionado, x0, y0, 1.0, 1.0, 0.0)
 
         # Restaura níveis e cores normais
-        dwg.draw.color = 0
+        dwg.draw.color = -1
         dwg.draw.level = 0
 
         return formato_selecionado, escala

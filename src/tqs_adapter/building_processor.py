@@ -1,10 +1,73 @@
 import os
+import re
 import sys
 import time
 import subprocess
 from typing import Dict, Any, Optional, List
 from src.tqs_adapter.tqs_env import configurar_ambiente_tqs_64
 from src.tqs_adapter.building_reader import TQSBuildingReader
+
+# O TQS.EXE -RLST retorna código 0 mesmo quando uma tarefa do GERENCIADOR.DAT falha
+# (ex.: "-CMD: Erro executando [PORLID]"), e essa mensagem nem sempre chega ao stdout.
+# Por isso a confirmação de cada tarefa é feita pelos artefatos que ela deveria gravar.
+_RE_ERRO_TQS = re.compile(r"Erro executando\s*\[([^\]]+)\]", re.IGNORECASE)
+_TOLERANCIA_MTIME_S = 2.0
+
+
+def extrair_erros_tqs(*textos: Optional[str]) -> List[str]:
+    """Retorna os nomes das tarefas reportadas como 'Erro executando [X]' na saída do TQS."""
+    erros: List[str] = []
+    for texto in textos:
+        for nome in _RE_ERRO_TQS.findall(texto or ""):
+            nome = nome.strip()
+            if nome and nome not in erros:
+                erros.append(nome)
+    return erros
+
+
+def arquivo_atualizado(caminho: str, desde: float, exigir_conteudo: bool = False) -> bool:
+    """True se o arquivo existe e foi gravado a partir de `desde` (epoch), opcionalmente não-vazio."""
+    try:
+        st = os.stat(caminho)
+    except OSError:
+        return False
+    if st.st_mtime < desde - _TOLERANCIA_MTIME_S:
+        return False
+    return st.st_size > 0 if exigir_conteudo else True
+
+
+def verificar_artefatos(caminho_edificio: str, artefatos: Dict[str, List[str]], desde: float) -> List[str]:
+    """
+    Para cada tarefa, exige que ao menos um dos arquivos esperados (caminhos relativos ao
+    edifício) tenha sido gravado durante o processamento. Retorna as tarefas não confirmadas.
+    """
+    falhas = []
+    for tarefa, arquivos in artefatos.items():
+        if not any(arquivo_atualizado(os.path.join(caminho_edificio, a), desde) for a in arquivos):
+            falhas.append(tarefa)
+    return falhas
+
+
+def verificar_vigas_dimensionadas(caminho_edificio: str, desde: float) -> List[str]:
+    """
+    Retorna os pavimentos cujas vigas foram processadas nesta execução (ORDCON.LST regravado)
+    mas cujo relatório de dimensionamento VIGAS/RELGER.LST ficou vazio ou não foi regravado.
+    """
+    pavimentos_sem_relger = []
+    try:
+        entradas = sorted(os.listdir(caminho_edificio))
+    except OSError:
+        return pavimentos_sem_relger
+    for nome in entradas:
+        pasta_vigas = os.path.join(caminho_edificio, nome, "VIGAS")
+        if not os.path.isdir(pasta_vigas):
+            continue
+        if not arquivo_atualizado(os.path.join(pasta_vigas, "ORDCON.LST"), desde):
+            continue
+        if not arquivo_atualizado(os.path.join(pasta_vigas, "RELGER.LST"), desde, exigir_conteudo=True):
+            pavimentos_sem_relger.append(nome)
+    return pavimentos_sem_relger
+
 
 class TQSBuildingProcessor:
     """
@@ -68,10 +131,20 @@ class TQSBuildingProcessor:
             proc_cmd,
         ]
 
+        artefatos: Dict[str, List[str]] = {}
+        if calcular_portico:
+            artefatos["PROC (pórtico espacial)"] = [r"ESPACIAL\CARDWG2.LST", r"ESPACIAL\CARDWG.LST"]
+
         if gerar_porlid:
             tarefas.append("PORLID")
+            artefatos["PORLID"] = [r"ESPACIAL\PORLID.DWG"]
 
-        return self._executar_batch(tarefas, timeout_segundos=timeout_segundos, descricao="Pórtico Espacial e Cargas")
+        return self._executar_batch(
+            tarefas,
+            timeout_segundos=timeout_segundos,
+            descricao="Pórtico Espacial e Cargas",
+            artefatos_esperados=artefatos,
+        )
 
     def processar_global_completo(
         self,
@@ -104,7 +177,21 @@ class TQSBuildingProcessor:
             "RESEST",
         ]
 
-        return self._executar_batch(tarefas, timeout_segundos=timeout_segundos, descricao="Processamento Global Completo")
+        artefatos: Dict[str, List[str]] = {
+            "PROC (pórtico espacial)": [r"ESPACIAL\CARDWG2.LST", r"ESPACIAL\CARDWG.LST"],
+        }
+        if dimensionar_pilares:
+            artefatos["PROC (dimensionamento de pilares)"] = [r"PILAR\SELEC.LST"]
+        artefatos["PORLID"] = [r"ESPACIAL\PORLID.DWG"]
+        artefatos["RESEST"] = [rf"ESPACIAL\RESEST{i}.TXT" for i in range(1, 9)]
+
+        return self._executar_batch(
+            tarefas,
+            timeout_segundos=timeout_segundos,
+            descricao="Processamento Global Completo",
+            artefatos_esperados=artefatos,
+            verificar_vigas=dimensionar_vigas,
+        )
 
     def verificar_consistencia_formas(
         self,
@@ -162,10 +249,16 @@ class TQSBuildingProcessor:
         tarefas: List[str],
         timeout_segundos: int,
         descricao: str,
-        exigir_cargas: bool = True
+        exigir_cargas: bool = True,
+        artefatos_esperados: Optional[Dict[str, List[str]]] = None,
+        verificar_vigas: bool = False,
     ) -> Dict[str, Any]:
         """
         Serializa o script GERENCIADOR.DAT na pasta da obra e invoca TQS.EXE -RLST.
+
+        :param artefatos_esperados: {tarefa: [arquivos relativos ao edifício]}; a tarefa só é
+            considerada executada se ao menos um desses arquivos for gravado durante o lote.
+        :param verificar_vigas: exige RELGER.LST não-vazio nos pavimentos cujas vigas foram processadas.
         """
         inicio = time.time()
         caminho_dat = os.path.join(self.caminho_edificio, "GERENCIADOR.DAT")
@@ -219,9 +312,39 @@ class TQSBuildingProcessor:
             else:
                 sucesso = (proc.returncode == 0)
 
+            # Confirmação por tarefa: o código de retorno do TQS não reflete falhas internas.
+            reportadas = {
+                t.upper() for t in extrair_erros_tqs(proc.stdout, proc.stderr) if t.upper() != "GERENCIADOR.DAT"
+            }
+            tarefas_com_falha = [f"{t} (reportado pelo TQS)" for t in sorted(reportadas)]
+            for t in verificar_artefatos(self.caminho_edificio, artefatos_esperados or {}, inicio):
+                if t.split(" ")[0].upper() not in reportadas:
+                    tarefas_com_falha.append(f"{t} (saída não gravada)")
+            pavimentos_sem_vigas = (
+                verificar_vigas_dimensionadas(self.caminho_edificio, inicio) if verificar_vigas else []
+            )
+
+            erro_msg = None
+            if tarefas_com_falha or pavimentos_sem_vigas:
+                sucesso = False
+                partes = []
+                if tarefas_com_falha:
+                    partes.append("tarefas sem confirmação: " + ", ".join(tarefas_com_falha))
+                if pavimentos_sem_vigas:
+                    partes.append("vigas não dimensionadas (RELGER.LST vazio) em: " + ", ".join(pavimentos_sem_vigas))
+                erro_msg = "Processamento incompleto - " + "; ".join(partes)
+
+            if erro_msg:
+                status = "erro"
+            else:
+                status = "sucesso" if sucesso else "aviso"
+
             return {
-                "status": "sucesso" if sucesso else "aviso",
+                "status": status,
                 "sucesso": sucesso,
+                "erro": erro_msg,
+                "tarefas_com_falha": tarefas_com_falha,
+                "pavimentos_sem_vigas_dimensionadas": pavimentos_sem_vigas,
                 "edificio": self.nome_edificio,
                 "caminho_edificio": self.caminho_edificio,
                 "tipo_processamento": descricao,

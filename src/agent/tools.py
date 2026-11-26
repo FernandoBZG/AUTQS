@@ -11,6 +11,7 @@ from src.skills.case_09_auditoria_lajes.skill import AuditoriaLajesSkill
 from src.skills.case_10_quantitativo_materiais.skill import QuantitativoMateriaisSkill
 from src.skills.case_11_memorial_calculo.skill import MemorialCalculoSkill
 from src.skills.case_12_limpeza_arquitetura.skill import LimpezaArquiteturaSkill
+from src.skills.case_13_geometria_ca.skill import GeometriaCASkill
 from src.tqs_adapter.model_editor import TQSModelEditor
 
 class ToolsRegistry:
@@ -34,6 +35,7 @@ class ToolsRegistry:
         self.registrar_skill(QuantitativoMateriaisSkill())
         self.registrar_skill(MemorialCalculoSkill())
         self.registrar_skill(LimpezaArquiteturaSkill())
+        self.registrar_skill(GeometriaCASkill())
 
     def registrar_skill(self, skill):
         self._skills[skill.nome] = skill
@@ -62,6 +64,14 @@ class ToolsRegistry:
                             "escala": {
                                 "type": "integer",
                                 "description": "Escala do desenho (50, 75 ou 100). Se omitido, auto-seleciona a ideal."
+                            },
+                            "origem_x": {
+                                "type": "number",
+                                "description": "Coordenada X (cm) de referência da origem (0,0) das cotas relativas."
+                            },
+                            "origem_y": {
+                                "type": "number",
+                                "description": "Coordenada Y (cm) de referência da origem (0,0) das cotas relativas."
                             }
                         },
                         "required": ["edificio_nome"]
@@ -345,6 +355,31 @@ class ToolsRegistry:
             {
                 "type": "function",
                 "function": {
+                    "name": "gerar_geometria_concreto_armado",
+                    "description": self._skills["gerar_geometria_concreto_armado"].descricao,
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "edificio_nome": {
+                                "type": "string",
+                                "description": "Nome ou código do edifício TQS (ex: '055' ou 'Flexinc - [055] Jardim Europa CA')."
+                            },
+                            "pavimento": {
+                                "type": "string",
+                                "description": "Nome do pavimento (ex: 'PISO DO SUBSOLO 1', 'Térreo', 'Tipo')."
+                            },
+                            "escala": {
+                                "type": "integer",
+                                "description": "Escala regulamentar do desenho (padrão 50)."
+                            }
+                        },
+                        "required": ["edificio_nome", "pavimento"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
                     "name": "padronizar_arquitetura_tqs",
                     "description": self._skills["padronizar_arquitetura_tqs"].descricao,
                     "parameters": {
@@ -497,6 +532,12 @@ class ToolsRegistry:
         """
         if nome_funcao in self._skills:
             skill = self._skills[nome_funcao]
+            if nome_funcao == "gerar_planta_de_cargas":
+                if "origem_cotas" not in argumentos and "origem_x" in argumentos and "origem_y" in argumentos:
+                    try:
+                        argumentos["origem_cotas"] = (float(argumentos["origem_x"]), float(argumentos["origem_y"]))
+                    except Exception:
+                        pass
             return skill.executar(**argumentos)
 
         # Roteamento das ferramentas do Modelador Estrutural
