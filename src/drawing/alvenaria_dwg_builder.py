@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple
 from TQS import TQSDwg
 from src.tqs_adapter.tqs_env import configurar_ambiente_tqs_64
-from src.drawing.tqs_dwg_builder import CATALOGO_MOLDURAS_TQS
+from src.drawing.tqs_dwg_builder import CATALOGO_MOLDURAS_TQS, SELO_LARGURA_CM, SELO_ALTURA_CM
 
 configurar_ambiente_tqs_64()
 
@@ -94,6 +94,17 @@ class AlvenariaDwgBuilder:
             if padrao_lower.endswith("*") and f.lower().startswith(padrao_lower[:-1]):
                 return os.path.join(pasta, f)
         return None
+
+    @staticmethod
+    def _cor_crua(dwg_origem: TQSDwg.Dwg, pos: int) -> int:
+        """
+        Cor gravada no elemento (``-1`` = cor do nível), sem a resolução pelo nível que o
+        iterador aplica (``iterator.color``). Garante que cópias preservem a cor do nível.
+        """
+        try:
+            return dwg_origem.edit._Edit__LerAtribElem(pos)[0]
+        except Exception:
+            return -1
 
     def _criar_backup_seguro(self, caminho_arquivo: str) -> Optional[str]:
         """
@@ -300,7 +311,7 @@ class AlvenariaDwgBuilder:
                             if (bounds_planta[0] - 200.0 <= it_l.x1 <= bounds_planta[1] + 200.0 and
                                 bounds_planta[2] - 200.0 <= it_l.y1 <= bounds_planta[3] + 200.0):
                                 dwg.draw.level = lvl
-                                dwg.draw.color = 0
+                                dwg.draw.color = -1
                                 dwg.draw.Text(it_l.x1, it_l.y1, 10.0, 0.0, txt)
                                 if lvl == 10:
                                     total_lajes += 1
@@ -342,7 +353,7 @@ class AlvenariaDwgBuilder:
 
         # 9. Título e Escala da Planta (posicionados diretamente acima da planta do edifício)
         dwg.draw.level = 222
-        dwg.draw.color = 0
+        dwg.draw.color = -1
         pav_nome = pavimento.replace("^", "º").upper()
         if "PAVIMENTO" in pav_nome:
             titulo = f"PRÉ-MODULAÇÃO DE 1ª FIADA - {pav_nome}"
@@ -354,11 +365,17 @@ class AlvenariaDwgBuilder:
         dwg.draw.Text(x_titulo, y_titulo, 32.5, 0.0, titulo)
 
         dwg.draw.level = 250
-        dwg.draw.color = 0
+        dwg.draw.color = -1
         dwg.draw.Text(x_titulo + 4.4, y_titulo - 24.6, 12.0, 0.0, f"ESCALA: 1:{escala}")
 
         # 10. Inserção de Resumo de Materiais, Legendas e Notas Técnicas na Coluna Lateral
-        self._inserir_coluna_lateral(dwg, elementos_referencia.get("laterais", []), bounds_planta=bounds_planta)
+        # Topo da área do selo (carimbo + revisões) na origem fixa das molduras A0 (y0 = -1606.6)
+        y_topo_selo = None
+        if bounds_planta[0] <= 5000.0:
+            y_topo_selo = -1606.6 + (1.0 + SELO_ALTURA_CM) * escala
+        _, y_max_coluna = self._inserir_coluna_lateral(
+            dwg, elementos_referencia.get("laterais", []), bounds_planta=bounds_planta, y_topo_selo=y_topo_selo
+        )
 
         # 11. REGRA 2: Carregar e Inserir o Corte Esquematico compilado do edificio como Bloco
         bloco_corte_inserido = False
@@ -379,6 +396,8 @@ class AlvenariaDwgBuilder:
         if bounds_planta[1] < 3000.0:
             max_x_lat = max(max_x_lat, 4300.0)
         max_y_conteudo = max(y_titulo + 40.0, bounds_planta[3] + 180.0)
+        if y_max_coluna is not None:
+            max_y_conteudo = max(max_y_conteudo, y_max_coluna)
         max_x_conteudo = max_x_lat
         bounds_totais = (bounds_planta[0] - 100.0, max_x_conteudo, min(bounds_planta[2] - 100.0, -1550.0), max_y_conteudo)
         moldura_escolhida = self._auto_selecionar_e_desenhar_moldura(dwg, bounds_totais, escala=escala)
@@ -492,19 +511,19 @@ class AlvenariaDwgBuilder:
             dwg.edit.Erase(p)
 
         dwg.draw.level = 222
-        dwg.draw.color = 0
+        dwg.draw.color = -1
         pav_nome_exec = pavimento.replace("^", "º").upper()
         novo_titulo = f"PRÉ-MODULAÇÃO DE 1ª FIADA - {pav_nome_exec}"
         dwg.draw.Text(title_pos[0], title_pos[1], 32.5, 0.0, novo_titulo)
 
         if sacadas:
             dwg.draw.level = 237
-            dwg.draw.color = 6
+            dwg.draw.color = -1
             for x1, y1, x2, y2 in sacadas:
                 dwg.draw.Line(x1, y1, x2, y2)
 
             dwg.draw.level = 0
-            dwg.draw.color = 7
+            dwg.draw.color = -1
             for x1, y1, x2, y2 in sacadas:
                 dwg.draw.Line(x1, y1, x2, y2)
 
@@ -693,7 +712,7 @@ class AlvenariaDwgBuilder:
     def _adicionar_juntas_dilatacao(self, dwg: TQSDwg.Dwg, bounds: List[float]):
         """Adiciona as marcacoes de juntas de dilatacao e movimentacao no Nivel 221 de forma dinamica."""
         dwg.draw.level = 221
-        dwg.draw.color = 0
+        dwg.draw.color = -1
         min_x, max_x, min_y, max_y = bounds
         largura = max_x - min_x
         altura = max_y - min_y
@@ -771,7 +790,7 @@ class AlvenariaDwgBuilder:
                     nome_bloco = cand_b
                     break
             dwg.draw.level = 0
-            dwg.draw.color = 0
+            dwg.draw.color = -1
             dwg.draw.BlockInsert(nome_bloco, x_ins, y_ins, 1.0, 1.0, 0.0)
             return True
         except Exception:
@@ -851,8 +870,8 @@ class AlvenariaDwgBuilder:
         my1 = h_proj - (1.0 * escala)
 
         # Selo técnico ABNT
-        larg_selo = 17.5 * escala
-        alt_selo = 14.85 * escala
+        larg_selo = SELO_LARGURA_CM * escala
+        alt_selo = SELO_ALTURA_CM * escala  # Carimbo + tabela de revisões
         sx0 = mx1 - larg_selo
         sy1 = my0 + alt_selo
 
@@ -860,7 +879,7 @@ class AlvenariaDwgBuilder:
         # Desenha a Moldura diretamente em linhas e texto no Nível 230
         # (Sem BlockInsert para não criar caixa delimitadora gigante que atrapalha seleção de blocos no TQS EAG)
         dwg.draw.level = 230
-        dwg.draw.color = 1
+        dwg.draw.color = -1
 
         # 1. Borda externa do papel
         dwg.draw.Line(x0, y0, x0 + w_proj, y0)
@@ -1281,7 +1300,7 @@ class AlvenariaDwgBuilder:
 
         def _adicionar_linha(p1, p2):
             dwg.draw.level = 237
-            dwg.draw.color = 6
+            dwg.draw.color = -1
             dwg.draw.Line(p1[0], p1[1], p2[0], p2[1])
             linhas_existentes.add(normalizar_segmento(p1, p2))
 
@@ -1385,7 +1404,7 @@ class AlvenariaDwgBuilder:
                                 item = {
                                     "tipo": el,
                                     "nivel": 237,
-                                    "cor": 6,
+                                    "cor": -1,
                                     "x1": it_t.x1,
                                     "y1": it_t.y1,
                                     "x2": it_t.x2,
@@ -1461,7 +1480,7 @@ class AlvenariaDwgBuilder:
                                         item = {
                                             "tipo": el,
                                             "nivel": 237,
-                                            "cor": 6 if it_c.color == 0 else it_c.color,
+                                            "cor": -1,
                                             "x1": it_c.x1,
                                             "y1": it_c.y1,
                                             "x2": it_c.x2,
@@ -1531,7 +1550,7 @@ class AlvenariaDwgBuilder:
                                     item = {
                                         "tipo": el,
                                         "nivel": lvl,
-                                        "cor": it_l.color,
+                                        "cor": self._cor_crua(dwg_lat, pos),
                                         "x1": it_l.x1,
                                         "y1": it_l.y1,
                                         "x2": it_l.x2,
@@ -1567,19 +1586,32 @@ class AlvenariaDwgBuilder:
         dwg: TQSDwg.Dwg,
         elementos_referencia: List[Dict[str, Any]],
         bounds_planta: Optional[List[float]] = None,
-    ):
-        """Insere os elementos de resumo, legendas, detalhes e contornos de laje na prancha."""
+        y_topo_selo: Optional[float] = None,
+    ) -> Tuple[float, Optional[float]]:
+        """
+        Insere os elementos de resumo, legendas, detalhes e contornos de laje na prancha.
+        Retorna (dy_leg, y_max_coluna): deslocamento vertical aplicado à coluna da legenda
+        (x >= 3750) e a cota máxima atingida por ela, para o dimensionamento da moldura.
+        """
         # Calcula deslocamento vertical caso a legenda ultrapasse o topo util da folha (~Y = +300)
         dy_leg = 0.0
-        if bounds_planta:
+        ys_lat = [
+            item.get("y1", 0.0)
+            for item in elementos_referencia
+            if item.get("x1", 0.0) >= 3750.0
+        ]
+        if bounds_planta and ys_lat:
             y_topo_alvo = max(bounds_planta[3] + 220.0, 260.0)
-            ys_lat = [
-                item.get("y1", 0.0)
-                for item in elementos_referencia
-                if item.get("x1", 0.0) >= 3750.0
-            ]
-            if ys_lat and max(ys_lat) > y_topo_alvo:
+            if max(ys_lat) > y_topo_alvo:
                 dy_leg = y_topo_alvo - max(ys_lat) - 20.0
+        # A coluna da legenda fica sobre o canto do selo: nunca pode descer para dentro da
+        # área do carimbo + tabela de revisões (prevalece sobre o alvo de topo acima).
+        if y_topo_selo is not None and ys_lat:
+            y_base_leg = min(ys_lat + [-28.2]) if bounds_planta and bounds_planta[1] < 3000.0 else min(ys_lat)
+            dy_min = (y_topo_selo + 30.0) - y_base_leg
+            if dy_leg < dy_min:
+                dy_leg = dy_min
+        y_max_coluna = (max(ys_lat + ([555.6] if bounds_planta and bounds_planta[1] < 3000.0 else [])) + dy_leg) if ys_lat else None
 
         for item in elementos_referencia:
             el = item["tipo"]
@@ -1613,7 +1645,7 @@ class AlvenariaDwgBuilder:
             y_leg_head = 495.0 + dy_leg
             y_leg_bot = -28.2 + dy_leg
             dwg.draw.level = 0
-            dwg.draw.color = 7
+            dwg.draw.color = -1
 
             tem_topo_legenda = any(
                 item["tipo"] in ["Linha", "Polyline", "Indefinido"]
@@ -1630,6 +1662,8 @@ class AlvenariaDwgBuilder:
             dwg.draw.Line(x_leg_0, y_leg_top, x_leg_0, y_leg_bot)       # Lateral esquerda
             dwg.draw.Line(x_leg_1, y_leg_top, x_leg_1, y_leg_bot)       # Lateral direita
             dwg.draw.Line(x_leg_0, y_leg_head, x_leg_1, y_leg_head)     # Divisoria do titulo
+
+        return dy_leg, y_max_coluna
 
     def _auditar_dwg(self, caminho_dwg: str) -> Dict[str, Any]:
         """Audita a integridade do DWG emitido verificando elementos, camadas e alturas de texto."""
@@ -1804,7 +1838,7 @@ class AlvenariaDwgBuilder:
 
         dwg.draw.level = 0
         for x1, y1, x2, y2, cor in linhas:
-            dwg.draw.color = cor
+            dwg.draw.color = -1
             dwg.draw.Line(
                 target_x_min + (x1 - bx[0]) * fator,
                 target_y_top - (bx[3] - y1) * fator,
@@ -1812,7 +1846,7 @@ class AlvenariaDwgBuilder:
                 target_y_top - (bx[3] - y2) * fator,
             )
         for x1, y1, h, ang, txt, cor in textos:
-            dwg.draw.color = cor
+            dwg.draw.color = -1
             dwg.draw.Text(
                 target_x_min + (x1 - bx[0]) * fator,
                 target_y_top - (bx[3] - y1) * fator,
@@ -1978,7 +2012,7 @@ class AlvenariaDwgBuilder:
         pav_label = pavimento.replace("^", "º").upper()
         tx_t, ty_t, th_t, ta_t = titulo_pos if titulo_pos else (bounds_f1[0] - 2.0, bounds_f1[3] + 375.0, 32.5, 0.0)
         dwg.draw.level = 222
-        dwg.draw.color = 0
+        dwg.draw.color = -1
         dwg.draw.Text(tx_t, ty_t, th_t, ta_t, f"MODULAÇÃO DE 1ª FIADA e 2ª FIADA - {pav_label}")
 
         # 6. Prepara e insere 1ª e 2ª Fiadas limpas da COBERTURA/pavimento
@@ -1996,7 +2030,7 @@ class AlvenariaDwgBuilder:
                 raise RuntimeError("Falha ao carregar bloco da 1ª Fiada")
             blk_f1 = dwg.blockstable.Name(dwg.blockstable.count - 1)
             dwg.draw.level = 0
-            dwg.draw.color = 0
+            dwg.draw.color = -1
             dwg.draw.BlockInsert(blk_f1, 0.0, 0.0, 1.0, 1.0, 0.0)
 
             # Carrega e insere 2ª Fiada deslocada por (dx_fiada2, 0.0)
@@ -2004,7 +2038,7 @@ class AlvenariaDwgBuilder:
                 raise RuntimeError("Falha ao carregar bloco da 2ª Fiada")
             blk_f2 = dwg.blockstable.Name(dwg.blockstable.count - 1)
             dwg.draw.level = 0
-            dwg.draw.color = 0
+            dwg.draw.color = -1
             dwg.draw.BlockInsert(blk_f2, dx_fiada2, 0.0, 1.0, 1.0, 0.0)
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -2019,7 +2053,7 @@ class AlvenariaDwgBuilder:
                 while True:
                     if it_l.GetElementReadPosition() and it_l.elementName == "Texto" and it_l.level in [10, 13]:
                         dwg.draw.level = it_l.level
-                        dwg.draw.color = 0
+                        dwg.draw.color = -1
                         dwg.draw.Text(it_l.x1, it_l.y1, 10.0, 0.0, it_l.text.strip())
                         if it_l.level == 10:
                             total_lajes += 1
@@ -2037,7 +2071,7 @@ class AlvenariaDwgBuilder:
                 while True:
                     if it_t.GetElementReadPosition() and it_t.level == 200 and it_t.elementName == "Linha":
                         dwg.draw.level = 237
-                        dwg.draw.color = 6
+                        dwg.draw.color = -1
                         dwg.draw.Line(it_t.x1, it_t.y1, it_t.x2, it_t.y2)
                         total_lajes_ext += 1
                     if not it_t.Next():
@@ -2063,7 +2097,7 @@ class AlvenariaDwgBuilder:
             is_vert = (45.0 <= ang_raw <= 135.0) or (vp.get("h", 0.0) > vp.get("w", 0.0) * 1.2)
             ang = 90.0 if is_vert else 0.0
             dwg.draw.level = 239
-            dwg.draw.color = 4
+            dwg.draw.color = -1
             dwg.draw.Text(vp["x"], vp["y"], 9.0, ang, dim_txt)
             dwg.draw.Text(vp["x"] + dx_fiada2, vp["y"], 9.0, ang, dim_txt)
             vaos_inseridos += 1
@@ -2110,7 +2144,7 @@ class AlvenariaDwgBuilder:
                     target_x = box_x0 + max(0.0, (box_x1 - box_x0 - c_w) / 2.0)
                     target_y = box_y0 + max(0.0, (box_y1 - box_y0 - c_h) / 2.0)
                     dwg.draw.level = 0
-                    dwg.draw.color = 0
+                    dwg.draw.color = -1
                     dwg.draw.BlockInsert(nome_bloco, target_x - c_bx[0], target_y - c_bx[2], 1.0, 1.0, 0.0)
                     bloco_corte_inserido = True
 

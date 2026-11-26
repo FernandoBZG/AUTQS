@@ -340,7 +340,7 @@ def main():
             print(f"     Lajes:     {res.get('total_lajes')} identificadas e sobrepostas")
             print(f"     Vãos:      {res.get('total_vaos')} aberturas cotadas")
             print(f"     Textos:    {aud.get('total_textos')} textos normativos (h_min = {aud.get('min_text_height_papel_cm'):.2f} cm no papel)")
-            print(f"     Moldura:   A0-45 (Escala 1:{res.get('escala')})")
+            print(f"     Moldura:   {res.get('moldura')} (Escala 1:{res.get('escala')})")
             print(f"\nAbra o desenho diretamente no TQS (Menu Arquivo > Abrir Desenho) para visualização e plotagem.")
         else:
             print(f"[ERRO] Falha ao gerar formas: {res.get('erro')}")

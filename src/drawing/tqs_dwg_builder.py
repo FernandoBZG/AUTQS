@@ -32,6 +32,12 @@ def _corrigir_tqs_draw_level():
 
 _corrigir_tqs_draw_level()
 
+# Área do selo nas molduras oficiais do TQS (C:\TQSW\SUPORTE\NGE\MOLDURAS, A0-45, A1, 180-50...):
+# largura de 17.5 cm encostada na margem direita; altura da margem inferior (y=1.0) até o topo
+# da tabela de revisões (y=29.7, Nível 221), ou seja, carimbo + tabela de revisões = 28.7 cm.
+SELO_LARGURA_CM = 17.5
+SELO_ALTURA_CM = 28.7
+
 # Catálogo oficial de formatos/molduras padronizados do TQS (D:\TQSW\SUPORTE\NGE\MOLDURAS)
 # Todos os arquivos .DWG abaixo existem na instalação nativa do TQS. Largura máxima é rigorosamente 180.0 cm.
 # (Nome, Largura_papel_cm, Altura_papel_cm)
@@ -1528,8 +1534,8 @@ class TQSDwgPlantaDeCargasBuilder:
             for e in blocos_data.get("convencoes_locacao", []):
                 etype = e.get("type")
                 dwg.draw.level = e.get("level", 221)
-                if "color" in e:
-                    dwg.draw.color = e["color"]
+                # Cor do nível (-1): a cor gravada no JSON é a cor resolvida, não deve virar cor fixa
+                dwg.draw.color = -1
                 if etype == "line":
                     dwg.draw.Line(
                         x_conv_loc + (e["dx1"] * fator_esc),
@@ -1560,8 +1566,8 @@ class TQSDwgPlantaDeCargasBuilder:
                         e["radius"] * fator_esc,
                     )
 
-            # Restaura cor padrão ByLevel
-            dwg.draw.color = 0
+            # Restaura cor do nível (ByLevel = -1)
+            dwg.draw.color = -1
             y_fim = y_conv_loc - (495.0 * fator_esc)
             return y_fim
 
@@ -1635,18 +1641,18 @@ class TQSDwgPlantaDeCargasBuilder:
         my1 = h_proj - (1.0 * escala)
 
         # Área reservada para o selo no canto inferior direito (apenas demarcação, sem detalhes de carimbo)
-        larg_selo = 17.5 * escala
-        alt_selo = 14.85 * escala  # Módulo A4 meio (14.85 cm)
+        larg_selo = SELO_LARGURA_CM * escala
+        alt_selo = SELO_ALTURA_CM * escala  # Carimbo + tabela de revisões
         sx0 = mx1 - larg_selo
         sy1 = my0 + alt_selo
 
-        # Criação do Bloco de Projeção da Moldura (Nível 100, Cor 37 - Padrão TQS não plotável)
+        # Criação do Bloco de Projeção da Moldura (Nível 100, cor do nível)
         dwg.draw.level = 100
-        dwg.draw.color = 37
+        dwg.draw.color = -1
 
         dwg.draw.BlockOpen(formato_selecionado, 0.0, 0.0)
         dwg.draw.level = 100
-        dwg.draw.color = 37
+        dwg.draw.color = -1
 
         # 1. Borda externa do papel
         dwg.draw.Line(0.0, 0.0, w_proj, 0.0)
@@ -1686,11 +1692,11 @@ class TQSDwgPlantaDeCargasBuilder:
 
         # Inserção do bloco no ponto (x0, y0) da prancha no Nível 100
         dwg.draw.level = 100
-        dwg.draw.color = 37
+        dwg.draw.color = -1
         dwg.draw.BlockInsert(formato_selecionado, x0, y0, 1.0, 1.0, 0.0)
 
         # Restaura níveis e cores normais
-        dwg.draw.color = 0
+        dwg.draw.color = -1
         dwg.draw.level = 0
 
         return formato_selecionado, escala
