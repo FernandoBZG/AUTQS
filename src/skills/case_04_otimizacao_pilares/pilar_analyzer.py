@@ -6,6 +6,10 @@ from typing import Dict, List, Optional, Tuple, Any
 
 from src.tqs_adapter.building_reader import TQSBuildingReader
 
+# Usado só quando o INICIA.LST não informa o pé-direito do lance.
+COMPRIMENTO_LANCE_PADRAO_M = 3.0
+
+
 @dataclass
 class LanceAnalise:
     """Informacoes e diagnostico de engenharia de um lance de pilar."""
@@ -45,6 +49,12 @@ class LanceAnalise:
     taxa_projetada_pct: Optional[float] = None
     economia_aco_kg: float = 0.0
     economia_concreto_m3: float = 0.0
+    pe_direito_m: Optional[float] = None  # PD do lance em PILAR/INICIA.LST
+
+    @property
+    def comprimento_m(self) -> float:
+        """Comprimento do lance para volume e peso de aço: PD real ou, sem ele, 3,0 m."""
+        return self.pe_direito_m if self.pe_direito_m else COMPRIMENTO_LANCE_PADRAO_M
 
 @dataclass
 class PilarAnalise:
@@ -264,6 +274,11 @@ class TQSColumnAnalyzer:
         # 1. Carrega dados basicos de SELEC.LST
         lances_map = self._parse_selec_lst()
 
+        # 1.5. Pé-direito real de cada lance (PILAR/INICIA.LST)
+        pds = self._parse_inicia_lst()
+        for chave, lance in lances_map.items():
+            lance.pe_direito_m = pds.get(chave)
+
         # 2. Enriquece com esforcos e As_nec de LISPIL.LST
         self._enriquecer_com_lispil(lances_map)
 
@@ -299,6 +314,34 @@ class TQSColumnAnalyzer:
         # 6. Agrega metricas globais do edificio
         resumo = self._construir_resumo_global(todos_lances, pilares_agrupados)
         return resumo
+
+    def _parse_inicia_lst(self) -> Dict[Tuple[str, int], float]:
+        """
+        Pé-direito (PD, em m) de cada lance em PILAR/INICIA.LST. Linha de lance:
+        "L <n>  B  H  dx  dy  ANG  SECAO  JX  DFSP  PD  HVx ..." (PD é o 11º token).
+        """
+        caminho = os.path.join(self.pasta_pilar, "INICIA.LST")
+        if not os.path.exists(caminho):
+            return {}
+        pds: Dict[Tuple[str, int], float] = {}
+        pilar_atual = None
+        with open(caminho, "r", encoding="latin1", errors="replace") as f:
+            for linha in f:
+                m_p = re.match(r"^\s*PILAR\s*:\s*([A-Za-z0-9_]+)", linha)
+                if m_p:
+                    pilar_atual = m_p.group(1)
+                    continue
+                if pilar_atual is None:
+                    continue
+                tokens = linha.split()
+                if len(tokens) >= 11 and tokens[0] == "L" and tokens[1].isdigit():
+                    try:
+                        pd_m = float(tokens[10])
+                    except ValueError:
+                        continue
+                    if 0.5 <= pd_m <= 30.0:
+                        pds[(pilar_atual, int(tokens[1]))] = pd_m
+        return pds
 
     def _parse_selec_lst(self) -> Dict[Tuple[str, int], LanceAnalise]:
         """Extrai os lances tabulados em PILAR/SELEC.LST."""
@@ -372,7 +415,7 @@ class TQSColumnAnalyzer:
                         fck = float(linha[89:96].strip()) if len(linha) > 96 and linha[89:96].strip() else 30.0
                         cobr = float(linha[96:102].strip()) if len(linha) > 102 and linha[96:102].strip() else 2.5
                         t_val = float(linha[102:108].strip()) if len(linha) > 108 and linha[102:108].strip() else None
-                        lbd = float(linha[108:113].strip().replace(".", "")) if len(linha) > 113 and linha[108:113].strip() else None
+                        lbd = float(linha[108:113].strip().rstrip(".")) if len(linha) > 113 and linha[108:113].strip() else None
                         ni = float(linha[113:120].strip()) if len(linha) > 120 and linha[113:120].strip() else None
                         ord2 = linha[120:].strip() if len(linha) > 120 else ""
 
@@ -533,7 +576,7 @@ class TQSColumnAnalyzer:
 
     def _classificar_lance(self, lance: LanceAnalise):
         """Aplica regras normativas e gera sugestoes de redimensionamento e economia."""
-        comprimento_lance_m = 3.0
+        comprimento_lance_m = lance.comprimento_m
 
         if lance.status == "NAO_DIMENSIONADO":
             lance.classificacao = "NAO_DIMENSIONADO"
@@ -652,9 +695,9 @@ class TQSColumnAnalyzer:
         taxas = [l.taxa_armadura_pct for l in lances_calc if l.taxa_armadura_pct is not None]
         taxa_media = sum(taxas) / len(taxas) if taxas else 0.0
 
-        vol_total = sum((l.b_cm * l.h_cm * 3.0) / 10000.0 for l in todos_lances)
+        vol_total = sum((l.b_cm * l.h_cm * l.comprimento_m) / 10000.0 for l in todos_lances)
         peso_aco = sum(
-            (l.as_efet_cm2 or 0.0) * 3.0 * 0.785 * 1.15
+            (l.as_efet_cm2 or 0.0) * l.comprimento_m * 0.785 * 1.15
             for l in lances_calc
         )
 

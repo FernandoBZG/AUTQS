@@ -137,7 +137,8 @@ class PlantaDeCargasSkill(BaseSkill):
                 "xcg_rel_cm": round(p.baricentro.x - rx_cm, 1) if p.baricentro else None,
                 "ycg_rel_cm": round(p.baricentro.y - ry_cm, 1) if p.baricentro else None,
                 "nk_max_tf": p.esforcos.nk_max if p.esforcos else 0.0,
-                "nk_min_tf": p.esforcos.nk_min if p.esforcos else 0.0,
+                "nk_min_tf": p.esforcos.nk_min if p.esforcos else None,
+                "sem_reacao": p.esforcos is None,
                 "mxk_tfm": p.esforcos.mxk if p.esforcos else 0.0,
                 "myk_tfm": p.esforcos.myk if p.esforcos else 0.0,
                 "hx_tf": p.esforcos.hx if p.esforcos else 0.0,
@@ -162,19 +163,36 @@ class PlantaDeCargasSkill(BaseSkill):
         }
 
 
-        # Executa guardrails de validação
-        if not self.validar(resultado):
-            resultado["status"] = "alerta_consistencia"
+        # Guardrails de engenharia: os alertas acompanham o resultado sem mudar o status
+        resultado["alertas"] = self.verificar_alertas(resultado)
 
         return resultado
 
-    def validar(self, resultado: Dict[str, Any]) -> bool:
+    @staticmethod
+    def verificar_alertas(resultado: Dict[str, Any]) -> list:
         """
-        Guardrail de engenharia:
-        - Verifica se há pilares com tração excessiva na fundação.
+        Guardrails de engenharia sobre as reações da fundação:
+        - pilares com tração (Fz < 0 no caso FZ MIN ou no FZ MAX);
+        - pilares sem reação no PORLIS2/PORLID (não são tratados como Nk = 0);
+        - ausência do caso FZ MIN (sem ele não há como verificar tração/alívio).
         """
+        alertas = []
         pilares = resultado.get("pilares", [])
         for p in pilares:
-            if p.get("nk_min_tf", 0.0) < -5.0:
-                print(f"[ALERTA ESTRUTURAL] Pilar {p['pilar']} com tração na fundação: {p['nk_min_tf']} tf")
-        return True
+            if p.get("sem_reacao"):
+                continue
+            valores = [v for v in (p.get("nk_min_tf"), p.get("nk_max_tf")) if v is not None]
+            if valores and min(valores) < 0:
+                alertas.append(f"Pilar {p['pilar']} com tração na fundação: Fz = {min(valores):.1f} tf.")
+        sem_reacao = [p["pilar"] for p in pilares if p.get("sem_reacao")]
+        if sem_reacao:
+            alertas.append(f"{len(sem_reacao)} pilar(es) sem reação lida do TQS: {', '.join(sem_reacao)}.")
+        if pilares and all(p.get("nk_min_tf") is None for p in pilares):
+            alertas.append("O PORLID não tem o caso FZ MIN: tração/alívio nos pilares não foi verificado.")
+        for a in alertas:
+            print(f"[ALERTA ESTRUTURAL] {a}")
+        return alertas
+
+    def validar(self, resultado: Dict[str, Any]) -> bool:
+        """True quando não há alertas de engenharia (tração, pilares sem reação, FZ MIN ausente)."""
+        return not self.verificar_alertas(resultado)

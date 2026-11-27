@@ -36,7 +36,7 @@ class GeometriaPilar:
 class EsforcosFundacao:
     """Esforços característicos e de cálculo atuantes na cota de fundação."""
     nk_max: float        # Esforço axial característico máximo de compressão (tf)
-    nk_min: float        # Esforço axial característico mínimo (tração/alívio) (tf)
+    nk_min: Optional[float] = None  # Fz mínimo real (caso FZ MIN do PORLID); None se o TQS não o forneceu (tf)
     mxk: float = 0.0     # Momento fletor característico em torno do eixo X (tf.m)
     myk: float = 0.0     # Momento fletor característico em torno do eixo Y (tf.m)
     mz: float = 0.0      # Momento fletor / torçor característico em torno do eixo Z (tf.m)

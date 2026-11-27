@@ -1201,12 +1201,12 @@ class TQSDwgPlantaDeCargasBuilder:
                 esf = p.esforcos
                 linhas.append([
                     p.nome,
-                    f"{esf.nk_max:.1f}" if esf else "0.0",
-                    f"{esf.hx:.1f}" if esf else "0.0",
-                    f"{esf.hy:.1f}" if esf else "0.0",
-                    f"{esf.mxk:.2f}" if esf else "0.00",
-                    f"{esf.myk:.2f}" if esf else "0.00",
-                    f"{esf.mz:.2f}" if esf else "0.00",
+                    f"{esf.nk_max:.1f}" if esf else "-",
+                    f"{esf.hx:.1f}" if esf else "-",
+                    f"{esf.hy:.1f}" if esf else "-",
+                    f"{esf.mxk:.2f}" if esf else "-",
+                    f"{esf.myk:.2f}" if esf else "-",
+                    f"{esf.mz:.2f}" if esf else "-",
                 ])
 
         n_total = len(linhas)

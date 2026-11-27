@@ -14,7 +14,7 @@ class CasoEstabilidade:
     m2: float
     c_hor: float
     m1: float
-    gama_z: float
+    gama_z: Optional[float]  # None nas combinações de ELU: lá o TQS informa FAVt, que não é γz
     alfa: float
     fav_t: Optional[float] = None
     mult_h: Optional[float] = None
@@ -185,11 +185,11 @@ class TQSStabilityAnalyzer:
         if m_alt:
             altura_m = float(m_alt.group(1))
 
-        m_cfim = re.search(r"Cota final\s*\.*\s*(\d+(?:\.\d+)?)", conteudo, re.IGNORECASE)
+        m_cfim = re.search(r"Cota final\s*\.*\s*(-?\d+(?:\.\d+)?)", conteudo, re.IGNORECASE)
         if m_cfim:
             cota_fim = float(m_cfim.group(1))
 
-        m_cini = re.search(r"Cota inicial\s*\.*\s*(\d+(?:\.\d+)?)", conteudo, re.IGNORECASE)
+        m_cini = re.search(r"Cota inicial\s*\.*\s*(-?\d+(?:\.\d+)?)", conteudo, re.IGNORECASE)
         if m_cini:
             cota_ini = float(m_cini.group(1))
 
@@ -251,7 +251,7 @@ class TQSStabilityAnalyzer:
                             m1=float(tokens[5]),
                             mult_h=float(tokens[6]),
                             fav_t=fav_val,
-                            gama_z=fav_val,
+                            gama_z=None,
                             alfa=float(tokens[8]),
                             obs=" ".join(tokens[9:]) if len(tokens) > 9 else "",
                             tipo="COMBINAÇÃO_ELU"
@@ -332,15 +332,27 @@ class TQSStabilityAnalyzer:
             alertas.append("O parâmetro Alfa e GamaZ indicam estrutura de nós móveis.")
 
         # Consolidação de métricas
-        gz_max = max([c.gama_z for c in casos_simples + combinacoes_elu] or [1.0])
-        fav_max = max([c.fav_t for c in combinacoes_elu if c.fav_t is not None] or [gz_max])
+        # γz (NBR 6118, 15.5.3) vem dos casos simples de vento; FAVt das combinações de ELU
+        # é o fator de amplificação do TQS e é relatado à parte, sem entrar na classificação.
+        # γz = 0.000 significa "não calculado" (ex.: Obs="G", vento < 30% do desaprumo).
+        gz_simples = [c.gama_z for c in casos_simples if c.gama_z]
+        favs = [c.fav_t for c in combinacoes_elu if c.fav_t is not None]
+        if gz_simples:
+            gz_max = max(gz_simples)
+        else:
+            gz_max = max(favs) if favs else 1.0
+            if favs:
+                alertas.append("O PORALF não traz γz calculado para os casos simples de vento: classificação feita pelo FAVt.")
+        fav_max = max(favs) if favs else gz_max
         alfa_max = max([c.alfa for c in casos_simples + combinacoes_elu] or [0.0])
 
         classif = "NÓS FIXOS"
-        if max(gz_max, fav_max) > 1.30:
+        if gz_max > 1.30:
             classif = "CRÍTICO - INSTABILIDADE EXCESSIVA"
-        elif max(gz_max, fav_max) > 1.10:
+        elif gz_max > 1.10:
             classif = "NÓS MÓVEIS"
+        if fav_max > 1.30 and gz_max <= 1.30:
+            alertas.append(f"FAVt máximo das combinações de ELU = {fav_max:.3f} (> 1,30), embora γz = {gz_max:.3f}.")
 
         # Drift topo
         d_topo_max = 0.0

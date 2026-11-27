@@ -219,21 +219,21 @@ class CorteEsquematicoBuilder:
             y0 = y_atual
             y1 = y0 + h_box
 
-            # Caixa do pavimento (Nível 249 cor 3 para AE, Nível 248 cor 7 para CA)
+            # Caixa do pavimento (Nível 249 para AE, Nível 248 para CA; cor vem do nível)
             dwg.draw.level = 249 if pav.sistema == "AE" else 248
-            dwg.draw.color = 3 if pav.sistema == "AE" else 7
+            dwg.draw.color = -1  # cor do nível
             self._desenhar_retangulo(dwg, x_esq, y0, x_dir, y1)
 
             # Nome do pavimento
             dwg.draw.level = 0
-            dwg.draw.color = 7
+            dwg.draw.color = -1  # cor do nível
             dwg.draw.Text(x_txt_pav, (y0 + y1) * 0.5 + 2.0, 9.5, 0.0, pav.nome)
             dwg.draw.Text(x_txt_pav, (y0 + y1) * 0.5 - 12.0, 7.0, 0.0, f"PD={pav.pe_direito_m:.2f}m")
 
             # Especificação de materiais do pavimento
             if pav.sistema == "AE" and pav.fbk_mpa is not None:
                 dwg.draw.level = 257
-                dwg.draw.color = 7
+                dwg.draw.color = -1  # cor do nível
                 y_mid = (y0 + y1) * 0.5
                 dwg.draw.Text(x_txt_mat, y_mid + 16.0, 10.0, 0.0, f"BLOCO {_fmt_mpa(pav.fbk_mpa)} MPa")
                 dwg.draw.Text(x_txt_mat, y_mid + 2.5, 8.0, 0.0, f"ARGAMASSA {_fmt_mpa(pav.fak_mpa)} MPa")
@@ -241,16 +241,16 @@ class CorteEsquematicoBuilder:
                 dwg.draw.Text(x_txt_mat, y_mid - 24.5, 8.0, 0.0, f"PRISMA (OCO) {_fmt_mpa(pav.fpk_mpa)} MPa")
             else:
                 dwg.draw.level = 257
-                dwg.draw.color = 7
+                dwg.draw.color = -1  # cor do nível
                 dwg.draw.Text(x_txt_mat, (y0 + y1) * 0.5 - 4.0, 9.5, 0.0, f"CONCRETO ARMADO {pav.fck_concreto}")
 
             # Linha e símbolo de cota no topo do pavimento (y1)
             dwg.draw.level = 200
-            dwg.draw.color = 7
+            dwg.draw.color = -1  # cor do nível
             dwg.draw.Line(x_cota_ini, y1, x_cota_fim, y1)
 
             dwg.draw.level = 221
-            dwg.draw.color = 11
+            dwg.draw.color = -1  # cor do nível
             dwg.draw.Line(x_tri, y1, x_tri + 2.4, y1 + 3.4)
             dwg.draw.Line(x_tri, y1, x_tri - 2.4, y1 + 3.4)
             dwg.draw.Line(x_tri - 2.4, y1 + 3.4, x_tri + 2.4, y1 + 3.4)
@@ -258,7 +258,7 @@ class CorteEsquematicoBuilder:
             dwg.draw.Line(x_tri, y1 + 8.1, 150.4, y1 + 8.1)
 
             dwg.draw.level = 0
-            dwg.draw.color = 7
+            dwg.draw.color = -1  # cor do nível
             dwg.draw.Text(150.9, y1 + 11.0, 9.5, 0.0, f"{pav.cota_m:.2f}")
 
             faixas_pav.append((pav, y0, y1))
@@ -267,7 +267,7 @@ class CorteEsquematicoBuilder:
         # Título principal
         y_topo = y_atual + 55.0
         dwg.draw.level = 0
-        dwg.draw.color = 7
+        dwg.draw.color = -1  # cor do nível
         dwg.draw.Text(-428.0, y_topo, 19.8, 0.0, "CORTE ESQUEMÁTICO COM RESISTÊNCIAS DOS MATERIAIS")
         dwg.draw.Text(-428.0, y_topo - 24.0, 10.0, 0.0, f"EDIFÍCIO: {dados.nome_edificio.upper()}")
 
@@ -289,7 +289,7 @@ class CorteEsquematicoBuilder:
             self._desenhar_indicador_bloco(dwg, -537.5, y_centro, fbk)
             # Linha de chamada ligando o indicador de bloco à faixa dos pavimentos
             dwg.draw.level = 0
-            dwg.draw.color = 7
+            dwg.draw.color = -1  # cor do nível
             dwg.draw.Line(-418.7, y_centro, -381.9, y_centro)
 
         # Indicador da armadura do graute e argamassamento à direita da zona de alvenaria
@@ -301,7 +301,7 @@ class CorteEsquematicoBuilder:
         # Rodapé técnico normativo
         y_rod = y_base - 80.0
         dwg.draw.level = 257
-        dwg.draw.color = 7
+        dwg.draw.color = -1  # cor do nível
         if fbks_unicos:
             dwg.draw.Text(-285.0, y_rod, 10.0, 0.0, f"ALVENARIA ESTRUTURAL - {dados.tipo_bloco}")
             y_rod -= 16.0
@@ -355,13 +355,13 @@ class CorteEsquematicoBuilder:
 
         for sis, y0, y1 in grupos:
             dwg.draw.level = 0
-            dwg.draw.color = 7
+            dwg.draw.color = -1  # cor do nível
             dwg.draw.Line(-381.9, y0 + 10.0, -381.9, y1 - 10.0)
             dwg.draw.Line(-381.9, y0 + 10.0, -365.0, y0 + 10.0)
             dwg.draw.Line(-381.9, y1 - 10.0, -365.0, y1 - 10.0)
 
             dwg.draw.level = 18
-            dwg.draw.color = 2
+            dwg.draw.color = -1  # cor do nível
             y_mid = (y0 + y1) * 0.5 - 75.0
             if sis == "AE":
                 dwg.draw.Text(-615.0, y_mid, 11.8, 90.0, "ALVENARIA ESTRUTURAL")
@@ -374,10 +374,11 @@ class CorteEsquematicoBuilder:
         """Desenha indicador gráfico do bloco estrutural (contorno + furos + texto BLOCO XX MPa)."""
         # Caixa externa (118.8 x 76)
         dwg.draw.level = 0
-        dwg.draw.color = 7
+        dwg.draw.color = -1  # cor do nível
         self._desenhar_retangulo(dwg, x_esq, y_centro - 38.0, x_esq + 118.8, y_centro + 38.0)
 
         # Ícone esquemático de bloco vazado (2 furos) na parte superior da caixa
+        # Única cor fixa do corte: a cor identifica a resistência do bloco (fbk) na legenda.
         cor_bloco = {7.0: 3, 10.0: 4, 15.0: 2, 18.0: 6, 20.0: 1}.get(round(fbk_mpa, 0), 3)
         dwg.draw.level = 249
         dwg.draw.color = cor_bloco
@@ -389,14 +390,14 @@ class CorteEsquematicoBuilder:
         self._desenhar_retangulo(dwg, bx0 + 38.8, by0 + 4.5, bx1 - 6.0, by1 - 4.5)
 
         dwg.draw.level = 257
-        dwg.draw.color = 7
+        dwg.draw.color = -1  # cor do nível
         dwg.draw.Text(x_esq + 10.9, y_centro - 22.0, 9.5, 0.0, f"BLOCO {_fmt_mpa(fbk_mpa)} MPa")
 
     def _desenhar_indicador_arm_graute(self, dwg: Any, y_centro: float, arm_graute_mm: float) -> None:
         """Desenha o indicador de armadura do graute e o detalhe de argamassamento total."""
         # Detalhe da barra vertical de armadura do graute (com ganchos nas extremidades)
         dwg.draw.level = 18
-        dwg.draw.color = 2
+        dwg.draw.color = -1  # cor do nível
         x_bar = 261.1
         dwg.draw.Line(x_bar, y_centro - 42.0, x_bar, y_centro + 42.0)
         dwg.draw.Line(x_bar, y_centro + 42.0, x_bar + 10.0, y_centro + 34.0)
@@ -406,12 +407,12 @@ class CorteEsquematicoBuilder:
 
         # Linha de chamada para o detalhe de argamassamento
         dwg.draw.level = 0
-        dwg.draw.color = 7
+        dwg.draw.color = -1  # cor do nível
         dwg.draw.Line(253.2, y_centro, 269.1, y_centro)
         dwg.draw.Line(395.0, y_centro - 2.4, 410.0, y_centro - 2.4)
 
         dwg.draw.level = 257
-        dwg.draw.color = 7
+        dwg.draw.color = -1  # cor do nível
         dwg.draw.Text(420.0, y_centro + 22.0, 9.9, 0.0, "ARGAMASSAMENTO TOTAL")
         dwg.draw.Text(420.0, y_centro + 5.0, 9.9, 0.0, "NAS PAREDES LONGITUDINAIS E")
         dwg.draw.Text(420.0, y_centro - 11.0, 9.9, 0.0, "TRANSVERSAIS DO BLOCO")
@@ -420,7 +421,7 @@ class CorteEsquematicoBuilder:
         dx0, dy0 = 420.0, y_centro - 68.0
         dx1, dy1 = 537.0, y_centro - 24.0  # bloco 39x14 em escala 3:1
         dwg.draw.level = 249
-        dwg.draw.color = 3
+        dwg.draw.color = -1  # cor do nível
         self._desenhar_retangulo(dwg, dx0, dy0, dx1, dy1)
         # Furos internos
         f1x0, f1x1 = dx0 + 9.0, dx0 + 52.5
@@ -431,7 +432,7 @@ class CorteEsquematicoBuilder:
 
         # Indicação visual da argamassa nas paredes longitudinais e transversais (cor 4 = Ciano)
         dwg.draw.level = 221
-        dwg.draw.color = 4
+        dwg.draw.color = -1  # cor do nível
         for offset in (2.5, 5.0):
             # Paredes longitudinais (superior e inferior)
             dwg.draw.Line(dx0 + 2.0, dy0 + offset, dx1 - 2.0, dy0 + offset)
@@ -443,5 +444,5 @@ class CorteEsquematicoBuilder:
 
         # Ponto de graute armado no 1º furo (círculo de aço)
         dwg.draw.level = 18
-        dwg.draw.color = 2
+        dwg.draw.color = -1  # cor do nível
         dwg.draw.Circle((f1x0 + f1x1) * 0.5, (fy0 + fy1) * 0.5, 4.5)

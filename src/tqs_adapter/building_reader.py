@@ -133,7 +133,7 @@ class TQSBuildingReader:
                 if not l.strip() and len(reacoes) > 0:
                     break
                 m = re.match(
-                    r"^\s*(P\d+)\s+(\d+)\s+(\d+)\s+([-\d\.]+)\s+([-\d\.]+)\s+([-\d\.]+)\s+([-\d\.]+)\s+([-\d\.]+)\s+([-\d\.]+)",
+                    r"^\s*(P[A-Z]*\d+[A-Z]?)\s+(\d+)\s+(\d+)\s+([-\d\.]+)\s+([-\d\.]+)\s+([-\d\.]+)\s+([-\d\.]+)\s+([-\d\.]+)\s+([-\d\.]+)",
                     l,
                 )
                 if m:
@@ -146,7 +146,7 @@ class TQSBuildingReader:
                     
                     reacoes[nome_pilar] = EsforcosFundacao(
                         nk_max=fz,
-                        nk_min=fz * 0.85, # Estimativa conservadora de alívio se caso único
+                        nk_min=None,  # PORLIS2 só traz o caso 1; o mínimo vem do PORLID (FZ MIN)
                         mxk=mx,
                         myk=my,
                         hx=fx,
@@ -281,11 +281,14 @@ class TQSBuildingReader:
             )
 
         # Vincula os esforços lidos a cada pilar
+        # Pilar sem reação fica com esforcos=None (sem inventar Nk=0) e é listado nas notas.
+        sem_reacao = []
         for p in pilares:
             if p.nome in reacoes:
                 p.esforcos = reacoes[p.nome]
             else:
-                p.esforcos = EsforcosFundacao(nk_max=0.0, nk_min=0.0)
+                p.esforcos = None
+                sem_reacao.append(p.nome)
 
         # Ordena pilares por número (P1, P2, ..., P10, ...)
         def extrair_numero(pilar: PilarFundacao) -> int:
@@ -306,6 +309,16 @@ class TQSBuildingReader:
                     # Atualiza os esforços de cada pilar diretamente a partir do relatório oficial PORLID
                     if dados_porlid.get("linhas"):
                         mapa_porlid = {str(row[0]).strip().upper(): row for row in dados_porlid["linhas"]}
+                        # Fz mínimo real: caso "FZ MIN" do PORLID, quando configurado no PORLID3.DAT
+                        mapa_fz_min: Dict[str, float] = {}
+                        for caso in dados_porlid.get("casos", []):
+                            if "FZ MIN" in str(caso.get("titulo", "")).upper():
+                                for row_min in caso.get("linhas", []):
+                                    try:
+                                        mapa_fz_min[str(row_min[0]).strip().upper()] = float(row_min[1])
+                                    except (ValueError, IndexError):
+                                        pass
+                                break
                         for p in pilares:
                             nome_p = p.nome.strip().upper()
                             if nome_p in mapa_porlid:
@@ -319,7 +332,7 @@ class TQSBuildingReader:
                                     mz = float(row[6])
                                     p.esforcos = EsforcosFundacao(
                                         nk_max=fz,
-                                        nk_min=fz * 0.85,
+                                        nk_min=mapa_fz_min.get(nome_p),
                                         mxk=mx,
                                         myk=my,
                                         mz=mz,
@@ -327,10 +340,18 @@ class TQSBuildingReader:
                                         hy=fy,
                                         caso_critico=dados_porlid.get("titulo", "PORLID (TQS Oficial)"),
                                     )
+                                    if p.nome in sem_reacao:
+                                        sem_reacao.remove(p.nome)
                                 except (ValueError, IndexError):
                                     pass
         except Exception:
             dados_porlid = None
+
+        notas_extras = []
+        if sem_reacao:
+            notas_extras.append(
+                f"ATENÇÃO: {len(sem_reacao)} pilar(es) sem reação no PORLIS2/PORLID: {', '.join(sem_reacao)}."
+            )
 
         return PlantaDeCargasModel(
             edificio_nome=self.nome_edificio,
@@ -342,7 +363,7 @@ class TQSBuildingReader:
                 "Edifício lido nativamente do TQS V25.",
                 "Cargas e tabela de fundações extraídas de ESPACIAL/PORLID.DWG (TQS Oficial)." if dados_porlid else "Cargas extraídas do Pórtico Espacial (PORLIS2.LST - Caso 1).",
                 "Geometria e baricentros extraídos da malha de fundação (CARDWG2.LST).",
-            ],
+            ] + notas_extras,
             dados_porlid=dados_porlid,
         )
 
