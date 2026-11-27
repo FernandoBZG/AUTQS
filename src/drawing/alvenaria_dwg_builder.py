@@ -111,17 +111,9 @@ class AlvenariaDwgBuilder:
         Cria backup de segurança imediato com timestamp antes de qualquer modificação.
         Garante que nenhum arquivo seja jamais sobrescrito sem versão protegida.
         """
-        if not os.path.exists(caminho_arquivo) or not os.path.isfile(caminho_arquivo):
-            return None
-
-        pasta = os.path.dirname(caminho_arquivo)
-        nome_base, ext = os.path.splitext(os.path.basename(caminho_arquivo))
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        bkp_ts = os.path.join(pasta, f"{nome_base}_BKP_{ts}{ext}")
-
+        from src.core.backup import criar_backup
         try:
-            shutil.copy2(caminho_arquivo, bkp_ts)
-            return bkp_ts
+            return criar_backup(caminho_arquivo)
         except Exception:
             return None
 
@@ -1517,10 +1509,14 @@ class AlvenariaDwgBuilder:
             os.path.join(pasta_edificio, "TIPO A", "PRE_FOR_1aFIADA_TIPO A-R00.DWG"),
             os.path.join(pasta_edificio, "TIPO A", "EP - PRE_FOR_1aFIADA_TIPO A.DWG"),
         ]
-        # Adiciona backups do proprio pavimento
-        for f in sorted(os.listdir(pasta_pav), reverse=True):
-            if f.upper().startswith("PRE_FOR_1AFIADA") and "BKP" in f.upper() and f.upper().endswith(".DWG"):
-                candidatos_laterais.append(os.path.join(pasta_pav, f))
+        # Adiciona backups do proprio pavimento (antigos na pasta e novos em backup_claude)
+        from src.core.backup import BACKUP_PASTA
+        for pasta_bkp in (pasta_pav, os.path.join(pasta_pav, BACKUP_PASTA)):
+            if not os.path.isdir(pasta_bkp):
+                continue
+            for f in sorted(os.listdir(pasta_bkp), reverse=True):
+                if f.upper().startswith("PRE_FOR_1AFIADA") and "BKP" in f.upper() and f.upper().endswith(".DWG"):
+                    candidatos_laterais.append(os.path.join(pasta_bkp, f))
         for p_lat in candidatos_laterais:
             if caminho_saida_dwg and os.path.abspath(p_lat) == os.path.abspath(caminho_saida_dwg):
                 continue

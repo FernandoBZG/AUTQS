@@ -25,7 +25,7 @@ completo sem abrir o TQS: registra a revisão no `.CPL`, preenche o carimbo e pl
    revisão e status: `em dia`, `pendente` (desenho alterado depois da última plotagem),
    `aguardando plotagem` (revisão registrada sem `-Rnn.PDF`).
 2. **Emitir** (`acao="emitir"`): calcula a próxima revisão, sugere a descrição, mostra a prévia e
-   só grava com `aprovado=True` (backup `<ID>.CPL_BKP_<timestamp>` antes).
+   só grava com `aprovado=True` (backup em `PLANTAS\backup_claude\<ID>_BKP_<timestamp>.CPL` antes).
    - **Troca de fase** (`fase="PE"`): cria `054-EST-PE-0601-....CPL` a partir da prancha atual,
      com a tabela zerada em R00 e o carimbo `_CR` duplicado; a prancha antiga fica intacta.
      O valor de `_FASE` é atualizado pelo usuário nas variáveis do Editor de Plantas.
@@ -41,7 +41,7 @@ completo sem abrir o TQS: registra a revisão no `.CPL`, preenche o carimbo e pl
    `%TEMP%\AUTQS_plot_*`: carimbo preenchido + cópia do `.CPL` com caminhos absolutos. Confere
    o PDF (carimbo de plotagem `<ID>-Rnn.PLT`, tamanho da folha, nenhuma `%VARIAVEL` sobrando,
    todas as linhas da tabela de revisões, DXF completo) e, com `aprovado=True`, grava `<ID>-Rnn.PDF`,
-   `<ID>-Rnn.DXF` e o `<ID>_CR.DWG` em `PLANTAS` (backup `_BKP_<timestamp>` do que existir). Com divergência nas
+   `<ID>-Rnn.DXF` e o `<ID>_CR.DWG` em `PLANTAS` (backup em `PLANTAS\backup_claude` do que existir). Com divergência nas
    checagens não grava (salvo `forcar=True`).
    - Validado na R05 da `054-EST-PB-0601-TP-1FIA`: PDF idêntico ao do Editor de Plantas a
      1200 dpi; só muda a hora do carimbo de plotagem.

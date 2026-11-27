@@ -145,12 +145,14 @@ with st.expander("✨ 💡 **Capacidades do Modelo e Guia de Comandos** (Clique 
     permitindo consultar, auditar e alterar modelos estruturais em linguagem natural ou inspecionar pranchas completas.
     """)
 
-    tab_cap1, tab_cap2, tab_cap3, tab_cap4, tab_cap5, tab_cap6 = st.tabs([
+    tab_cap1, tab_cap2, tab_cap3, tab_cap4, tab_cap5, tab_cap7, tab_cap8, tab_cap6 = st.tabs([
         "🏗️ Modelador",
         "📐 Cargas & Locação",
         "🔍 Comparação de Formas",
         "🧱 Alvenaria Estrutural",
         "📊 Auditoria & Pilares/Vigas",
+        "🌐 Estabilidade & Lajes",
+        "📦 Quantitativos & Memorial",
         "🤖 Normas & IA",
     ])
 

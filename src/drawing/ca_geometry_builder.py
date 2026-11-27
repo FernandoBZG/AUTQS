@@ -76,12 +76,9 @@ class CAGeometryBuilder:
             caminho_ref = caminho_geo
 
         # 1. Backup Preventivo
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        bkp_path = os.path.join(pasta_pavimento, f"{os.path.splitext(geo_dwg_nome)[0]}_BKP_{ts}.DWG")
-        backup_criado = False
-        if os.path.exists(caminho_geo):
-            shutil.copy2(caminho_geo, bkp_path)
-            backup_criado = True
+        from src.core.backup import criar_backup
+        bkp_path = criar_backup(caminho_geo)
+        backup_criado = bkp_path is not None
 
         # 2. Coleta de elementos de prancha (Moldura, Título, Notas) da prancha de referência
         moldura_elems = []

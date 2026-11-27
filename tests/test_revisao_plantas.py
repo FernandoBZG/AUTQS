@@ -286,7 +286,7 @@ class TestSkillRevisao(BaseTemp):
         res = self.run_skill(acao="emitir", prancha="0601", descricao="ajuste", data="26/11/2026", aprovado=True)
         self.assertEqual(res["status"], "sucesso", res.get("erro"))
         self.assertTrue(os.path.exists(res["backup_criado"]))
-        self.assertFalse(res["backup_criado"].upper().endswith(".CPL"))
+        self.assertEqual(os.path.basename(os.path.dirname(res["backup_criado"])), "backup_claude")
         self.assertTrue(self.skill.validar(res))
         self.assertEqual(ler_cpl(self.cpl).ultima_revisao.descricao, "AJUSTE")
 

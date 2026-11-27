@@ -23,6 +23,74 @@ class AutqsChatAgent:
     def set_api_key(self, api_key: str):
         self.gemini_client = GeminiClient(api_key=api_key)
 
+    def _pedir_aprovacao_tqs(self, res: Dict[str, Any]) -> Dict[str, Any]:
+        """Guarda a chamada bloqueada pelo ToolsRegistry e pede confirmação ao usuário."""
+        params = res.get("parametros", {})
+        self.modificacao_pendente = {
+            "tipo": "processamento" if res.get("ferramenta") == "processar_edificio" else "tqs",
+            "funcao": res.get("ferramenta"),
+            "parametros": params,
+        }
+        linhas = [
+            "### ⚠️ Solicitação de Aprovação: Execução no TQS\n",
+            f"- **Ferramenta:** `{res.get('ferramenta')}`",
+            f"- **Edifício:** `{params.get('edificio_nome', '?')}`",
+        ]
+        if params.get("tipo_processamento"):
+            linhas.append(f"- **Tipo de processamento:** `{params['tipo_processamento']}`")
+        linhas += [
+            "\n> [!WARNING]",
+            "> **REGRA DE SEGURANÇA:** processar o edifício no TQS ou alterar o modelo só é feito com sua aprovação.",
+            "\n👉 Responda **sim** para executar ou **não** para cancelar.",
+        ]
+        return {"tipo": "solicitacao_aprovacao", "texto": "\n".join(linhas), "dados": self.modificacao_pendente}
+
+    def _carregar_cargas_somente_leitura(self) -> None:
+        """Lê as reações dos pilares da fundação sem gerar nem gravar DWG (para rankings e tração)."""
+        try:
+            res = self.orchestrator.registry.executar_ferramenta(
+                "gerar_planta_de_cargas",
+                {"edificio_nome": self.edificio_ativo or "054", "gerar_desenho": False},
+            )
+            if res.get("status") == "sucesso":
+                self.ultima_planta = res
+        except Exception:
+            pass
+
+    def _formatar_processamento(self, res_proc: Dict[str, Any], edificio_alvo: str) -> Dict[str, Any]:
+        """Monta a resposta do chat para o resultado de processar_edificio."""
+        if res_proc.get("sucesso"):
+            self.edificio_ativo = res_proc.get("edificio", edificio_alvo)
+            dur = res_proc.get("duracao_segundos", 0.0)
+            tipo_desc = res_proc.get("tipo_processamento", "Pórtico Espacial")
+            linhas = [f"### ⚙️ Processamento do Edifício Concluído com Sucesso!\n"]
+            linhas.append(
+                f"- **Edifício:** `{res_proc.get('edificio')}`\n"
+                f"- **Tipo de Cálculo:** {tipo_desc}\n"
+                f"- **Tempo de Execução:** `{dur:.1f} segundos`\n"
+                f"- **Pórtico Espacial:** `{'Calculado e Convergido (PORLIS OK)' if res_proc.get('tem_porlis') else 'Não gerado'}`\n"
+                f"- **Geometria de Pilares (CARDWG):** `{'Extraída com sucesso' if res_proc.get('tem_cardwg') else 'Não gerada'}`\n"
+            )
+
+            if res_proc.get("planta_gerada", {}).get("sucesso"):
+                pg = res_proc["planta_gerada"]
+                linhas.append(
+                    f"> [!TIP]\n"
+                    f"> **Planta de Cargas Atualizada:** O desenho `{os.path.basename(pg['caminho_dwg'])}` foi gerado automaticamente "
+                    f"na pasta `ESPACIAL` com as novas reações dos **{pg['total_pilares']} pilares**.\n"
+                )
+
+            return {
+                "tipo": "processamento_concluido",
+                "texto": "\n".join(linhas),
+                "dados": res_proc,
+            }
+        else:
+            return {
+                "tipo": "erro",
+                "texto": f"❌ **Falha no processamento do edifício:** {res_proc.get('erro', 'O TQS não retornou os arquivos esperados.')}"
+            }
+
     def responder(self, mensagem_usuario: str) -> Dict[str, Any]:
         """
         Processa a mensagem do usuário e retorna uma resposta estruturada contendo:
@@ -63,7 +131,11 @@ class AutqsChatAgent:
             if eh_afirmacao:
                 pend = self.modificacao_pendente
                 self.modificacao_pendente = None
-                res_mut = self.orchestrator.registry.executar_ferramenta(pend["funcao"], pend["parametros"])
+                res_mut = self.orchestrator.registry.executar_ferramenta(
+                    pend["funcao"], dict(pend["parametros"], aprovado=True)
+                )
+                if pend.get("tipo") == "processamento":
+                    return self._formatar_processamento(res_mut, pend["parametros"].get("edificio_nome", ""))
                 if pend.get("tipo") == "revisao_planta":
                     return {
                         "tipo": "texto" if res_mut.get("status") == "sucesso" else "erro",
@@ -342,37 +414,9 @@ class AutqsChatAgent:
                 res_proc = self.orchestrator.processar_comando_local(
                     msg, {"edificio_nome": edificio_alvo}
                 )
-                if res_proc.get("sucesso"):
-                    self.edificio_ativo = res_proc.get("edificio", edificio_alvo)
-                    dur = res_proc.get("duracao_segundos", 0.0)
-                    tipo_desc = res_proc.get("tipo_processamento", "Pórtico Espacial")
-                    linhas = [f"### ⚙️ Processamento do Edifício Concluído com Sucesso!\n"]
-                    linhas.append(
-                        f"- **Edifício:** `{res_proc.get('edificio')}`\n"
-                        f"- **Tipo de Cálculo:** {tipo_desc}\n"
-                        f"- **Tempo de Execução:** `{dur:.1f} segundos`\n"
-                        f"- **Pórtico Espacial:** `{'Calculado e Convergido (PORLIS OK)' if res_proc.get('tem_porlis') else 'Não gerado'}`\n"
-                        f"- **Geometria de Pilares (CARDWG):** `{'Extraída com sucesso' if res_proc.get('tem_cardwg') else 'Não gerada'}`\n"
-                    )
-
-                    if res_proc.get("planta_gerada", {}).get("sucesso"):
-                        pg = res_proc["planta_gerada"]
-                        linhas.append(
-                            f"> [!TIP]\n"
-                            f"> **Planta de Cargas Atualizada:** O desenho `{os.path.basename(pg['caminho_dwg'])}` foi gerado automaticamente "
-                            f"na pasta `ESPACIAL` com as novas reações dos **{pg['total_pilares']} pilares**.\n"
-                        )
-
-                    return {
-                        "tipo": "processamento_concluido",
-                        "texto": "\n".join(linhas),
-                        "dados": res_proc,
-                    }
-                else:
-                    return {
-                        "tipo": "erro",
-                        "texto": f"❌ **Falha no processamento do edifício:** {res_proc.get('erro', 'O TQS não retornou os arquivos esperados.')}"
-                    }
+                if res_proc.get("status") == "aguardando_aprovacao":
+                    return self._pedir_aprovacao_tqs(res_proc)
+                return self._formatar_processamento(res_proc, edificio_alvo)
             except Exception as e:
                 return {
                     "tipo": "erro",
@@ -800,10 +844,7 @@ class AutqsChatAgent:
         # 6. Perguntas analíticas sobre os pilares (maiores cargas, tração, etc.)
         if any(k in msg_lower for k in ["maior", "pesado", "mais carregado", "critico", "ranking"]):
             if not self.ultima_planta:
-                try:
-                    self.orchestrator.processar_comando_local("gerar_planta_de_cargas", {"edificio_nome": self.edificio_ativo or "054"})
-                except Exception:
-                    pass
+                self._carregar_cargas_somente_leitura()
 
             if self.ultima_planta:
                 pilares = self.ultima_planta.get("pilares", [])
@@ -827,10 +868,7 @@ class AutqsChatAgent:
         # 7. Pergunta sobre pilares com tração
         if any(k in msg_lower for k in ["tracao", "tração", "arrancamento", "negativo"]):
             if not self.ultima_planta:
-                try:
-                    self.orchestrator.processar_comando_local("gerar_planta_de_cargas", {"edificio_nome": self.edificio_ativo or "054"})
-                except Exception:
-                    pass
+                self._carregar_cargas_somente_leitura()
 
             if self.ultima_planta:
                 pilares = self.ultima_planta.get("pilares", [])

@@ -101,13 +101,10 @@ class PlantaDeCargasSkill(BaseSkill):
                 caminho_espacial_gerado = os.path.join(pasta_espacial, nome_arq)
 
                 # Backup automático de segurança da versão anterior caso já exista
-                if os.path.exists(caminho_espacial_gerado) and os.path.isfile(caminho_espacial_gerado):
-                    nome_base, ext = os.path.splitext(nome_arq)
+                if os.path.isfile(caminho_espacial_gerado):
+                    from src.core.backup import criar_backup
                     try:
-                        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                        bkp_ts = os.path.join(pasta_espacial, f"{nome_base}_BKP_{ts}{ext}")
-                        shutil.copy2(caminho_espacial_gerado, bkp_ts)
-                        caminho_backup_gerado = bkp_ts
+                        caminho_backup_gerado = criar_backup(caminho_espacial_gerado)
                     except Exception:
                         pass
 

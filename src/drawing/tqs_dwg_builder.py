@@ -196,12 +196,18 @@ class TQSDwgPlantaDeCargasBuilder:
         caminhos = ["COTREL.DAT"]
         if pasta_execucao and os.path.isdir(pasta_execucao):
             caminhos.append(os.path.join(pasta_execucao, "COTREL.DAT"))
+        from src.core.backup import criar_backup
         for c in caminhos:
             try:
+                if os.path.isfile(c):
+                    with open(c, "r", encoding="latin-1") as f:
+                        if f.read() == conteudo_cotrel:
+                            continue  # já está no padrão: não regrava
+                    criar_backup(c)  # preserva os critérios atuais em backup_claude
                 with open(c, "w", encoding="latin-1") as f:
                     f.write(conteudo_cotrel)
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[AVISO] Não foi possível ajustar {c}: {e}")
 
     def construir_planta_de_cargas(
         self,
@@ -442,26 +448,11 @@ class TQSDwgPlantaDeCargasBuilder:
     def _criar_backup_seguranca(caminho_arquivo: str) -> Optional[str]:
         """
         Cria cópia de backup do arquivo DWG existente antes de sobrescrever.
-        Gera uma cópia com timestamp histórico (ex: GABARITO_BKP_20261002_140728.DWG)
-        e atualiza GABARITO_BKP.DWG para consulta rápida.
+        Gera uma cópia com timestamp em backup_claude (ex: backup_claude\\GABARITO_BKP_20261002_140728.DWG).
         """
-        import shutil
-        from datetime import datetime
+        from src.core.backup import criar_backup
         try:
-            if not os.path.exists(caminho_arquivo) or not os.path.isfile(caminho_arquivo):
-                return None
-            pasta = os.path.dirname(caminho_arquivo)
-            nome_completo = os.path.basename(caminho_arquivo)
-            nome_base, ext = os.path.splitext(nome_completo)
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            nome_bkp_ts = f"{nome_base}_BKP_{ts}{ext}"
-            caminho_bkp_ts = os.path.join(pasta, nome_bkp_ts) if pasta else nome_bkp_ts
-            try:
-                shutil.copy2(caminho_arquivo, caminho_bkp_ts)
-            except Exception:
-                caminho_bkp_ts = None
-
-            return caminho_bkp_ts
+            return criar_backup(caminho_arquivo)
         except Exception:
             return None
 
@@ -1295,10 +1286,6 @@ class TQSDwgPlantaDeCargasBuilder:
                 # Colunas de Esforços Fz, Fx, Fy, Mx, My, Mz
                 ox = larguras[0]
                 for w, val in zip(larguras[1:], row[1:]):
-                    val_str = str(val).strip()
-                    text_offset = max(10.0 * fator_esc, (w / 2.0) - (len(val_str) * (3.5 * fator_esc)))
-                    dwg.draw.Text(bx0 + ox + text_offset, curr_y + (6.0 * fator_esc), h_txt_dados, 0.0, val_str)
-                    ox += w
                     val_str = str(val).strip()
                     text_offset = max(10.0 * fator_esc, (w / 2.0) - (len(val_str) * (3.5 * fator_esc)))
                     dwg.draw.Text(bx0 + ox + text_offset, curr_y + (6.0 * fator_esc), h_txt_dados, 0.0, val_str)

@@ -29,7 +29,7 @@ Ative esta habilidade sempre que o usuário solicitar:
 ```mermaid
 flowchart TD
     A["Identificação do Edifício e Pavimento<br/>(Ex: 055 CA / PISO DO SUBSOLO 1)"] --> B["Localização de FOR000x.DWG e GEO_*.DWG existente"]
-    B --> C["Backup Preventivo Automático<br/>(GEO_*_BKP_{timestamp}.DWG)"]
+    B --> C["Backup Preventivo Automático<br/>(backup_claude/GEO_*_BKP_{timestamp}.DWG)"]
     C --> D["Coleta da Prancha de Referência:<br/>* Moldura ABNT (Nível 100)<br/>* Título Executivo (Níveis 222/250)<br/>* Notas Técnicas e Legendas (Níveis 18, 0, 41, 221)"]
     D --> E["Clonagem Estrutural Pura<br/>(FOR000x.DWG -> GEO_*.DWG)"]
     E --> F["Purga de Cabeçalho Provisório do TQS<br/>(Remoção de 'Planta PISO...' e caixas em X < 11000)"]

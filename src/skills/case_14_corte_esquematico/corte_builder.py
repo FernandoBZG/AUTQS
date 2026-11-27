@@ -189,9 +189,8 @@ class CorteEsquematicoBuilder:
         gerais_dir.mkdir(parents=True, exist_ok=True)
         saida = Path(caminho_saida_dwg) if caminho_saida_dwg else (gerais_dir / "CORTE ESQUEMÁTICO.DWG")
 
-        if saida.exists():
-            bkp = saida.with_suffix(".BAK")
-            shutil.copy2(saida, bkp)
+        from src.core.backup import criar_backup
+        criar_backup(str(saida))
 
         dwg = TQSDwg.Dwg()
         dwg.file.New()
