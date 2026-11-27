@@ -1,5 +1,6 @@
 import json
 import re
+from src.agent.roteador import intencoes
 from typing import Dict, Any, List, Optional
 from src.agent.tools import ToolsRegistry
 
@@ -41,9 +42,13 @@ class AutqsAgentOrchestrator:
 
         cmd_lower = comando.lower()
         cmd_norm = normalizar_texto(comando)
+        rotas = intencoes(comando)  # roteador único (src/agent/roteador.py)
+        # Chamadas internas do chat usam o nome da ferramenta como comando
+        if comando.strip() == "gerar_planta_de_cargas":
+            rotas = ["planta_cargas"]
 
         # 1. Comando de listagem de edifícios
-        if any(k in cmd_norm for k in ["LIST", "QUAI", "MOSTR", "EXIB"]) and any(k in cmd_norm for k in ["EDIF", "PROJET", "OBRA"]) and not any(k in cmd_norm for k in ["PAVIMENT", "PISO", "VIGA", "LAJE", "PILAR", "CARGA"]):
+        if "listar_edificios" in rotas:
             return {
                 "status": "sucesso",
                 "tipo": "listagem_edificios",
@@ -83,7 +88,7 @@ class AutqsAgentOrchestrator:
 
         # 3. Processamento Estrutural do Edifício (Pórtico Espacial ou Global)
         # Ex: "processe o edifício 051", "calcular pórtico espacial", "rodar processamento global"
-        if not any(k in cmd_norm for k in ["MEMORIAL", "RELATORI", "JUSTIFICATIV"]) and any(k in cmd_norm for k in ["PROCESS", "CALCUL", "ROD", "EXECUT", "PORTIC", "RECALCUL"]) and any(k in cmd_norm for k in ["EDIFIC", "OBRA", "PROJET", "PORTIC", "ESTRUTUR", "MODEL"]):
+        if "processamento" in rotas:
             if "global" in cmd_lower or "completo" in cmd_lower or "armadur" in cmd_lower:
                 params["tipo_processamento"] = "global"
             else:
@@ -91,9 +96,8 @@ class AutqsAgentOrchestrator:
             return self.registry.executar_ferramenta("processar_edificio", params)
 
         # 4. Listagem de pavimentos do modelador
-        if any(k in cmd_norm for k in ["PAVIMENT", "PISO", "PLANTA", "NIVEL", "NIVEIS"]) and any(k in cmd_norm for k in ["LIST", "QUAI", "MOSTR", "VER", "EXIB", "QUANT"]):
-            if not any(k in cmd_norm for k in ["VIGA", "LAJE", "PILAR"]):
-                return self.registry.executar_ferramenta("listar_pavimentos_modelo", params)
+        if "listar_pavimentos" in rotas:
+            return self.registry.executar_ferramenta("listar_pavimentos_modelo", params)
 
         # 4. Edição de Elementos no Modelador (Vigas, Lajes, Pilares)
         mut = self.extrair_intencao_mutacao(comando, params)
@@ -101,12 +105,7 @@ class AutqsAgentOrchestrator:
             return self.registry.executar_ferramenta(mut["funcao"], mut["parametros"])
 
         # 6. Listagem de elementos de um pavimento (vigas, lajes, pilares)
-        # Pedidos de análise/comparação/ranking têm rotas próprias abaixo ("VER" casa com "VERIFIC").
-        termos_outras_rotas = ["ANALIS", "VERIFIC", "AUDIT", "DIMENSION", "ESFORC", "BIELA", "CORTANT",
-                               "COMPAR", "DIFF", "MAIS", "MAIOR", "MENOR", "CARREGAD", "TRAC", "OTIMIZ"]
-        if (any(k in cmd_norm for k in ["LIST", "QUAI", "MOSTR", "VER", "EXIB"])
-                and any(k in cmd_norm for k in ["VIGA", "LAJE", "PILAR", "CARGA"])
-                and not any(k in cmd_norm for k in termos_outras_rotas)):
+        if "listar_elementos" in rotas:
             if "pavimento" not in params:
                 pav_match = re.search(r'(?:no|do|pavimento|piso)\s+([a-zA-Z0-9_\^]+(?:\s+[a-zA-Z0-9_\^]+)?)', cmd_lower)
                 params["pavimento"] = pav_match.group(1) if pav_match else "terreo"
@@ -124,7 +123,7 @@ class AutqsAgentOrchestrator:
             return self.registry.executar_ferramenta("listar_elementos_pavimento", params)
 
         # 6.5. Análise e Auditoria Estrutural de Vigas (Esforços, Dimensionamento e Bielas)
-        if any(k in cmd_norm for k in ["ANALIS", "VERIFIC", "AUDIT", "DIMENSION", "ESFORC", "BIELA", "CORTANT"]) and any(k in cmd_norm for k in ["VIGA"]):
+        if "vigas" in rotas:
             if "pavimento" not in params:
                 pav_match = re.search(r'(?:no|do|pavimento|piso)\s+([a-zA-Z0-9_\^]+(?:\s+[a-zA-Z0-9_\^]+)?)', cmd_lower)
                 if pav_match:
@@ -136,7 +135,7 @@ class AutqsAgentOrchestrator:
             return self.registry.executar_ferramenta("analisar_vigas_pavimento", params)
 
         # 6.8. Comparação de Geometrias e Plantas de Formas (Diff / O que alterou no software)
-        if any(k in cmd_norm for k in ["COMPAR", "DIFF", "ALTERO", "MUDO", "DIFERENC", "SOBREPOSIC", "REVISA"]) and any(k in cmd_norm for k in ["GEOMETR", "FORMA", "PLANTA", "PROJET", "MODEL", "ARQUITETUR", "DESENH"]):
+        if "comparacao" in rotas:
             params["edificio_base"] = params.get("edificio_nome", "054")
             if "pavimento" not in params and "pavimento_base" not in params:
                 pav_match = re.search(r'(?:no|do|pavimento|piso)\s+([a-zA-Z0-9_\^]+(?:\s+[a-zA-Z0-9_\^]+)?)', cmd_lower)
@@ -147,7 +146,7 @@ class AutqsAgentOrchestrator:
             return self.registry.executar_ferramenta("comparar_geometrias_formas", params)
 
         # 7. Verificação de Consistência da Planta de Formas
-        if any(k in cmd_norm for k in ["CONSIST", "VERIFIC"]) and any(k in cmd_norm for k in ["PLANTA", "FORMA", "MODEL", "APOIO", "ESTRUTUR"]):
+        if "consistencia" in rotas:
             if "pavimento" not in params:
                 pav_match = re.search(r'(?:no|do|pavimento|piso)\s+([a-zA-Z0-9_\^]+(?:\s+[a-zA-Z0-9_\^]+)?)', cmd_lower)
                 if pav_match:
@@ -156,14 +155,12 @@ class AutqsAgentOrchestrator:
             return self.registry.executar_ferramenta("verificar_consistencia_planta", params)
 
         # 6.9. Estabilidade Global e ELS (GamaZ, FAVt, Alfa e Deslocamentos de Vento)
-        if any(k in cmd_norm for k in ["ESTABILID", "GAMAZ", "GAMA_Z", "ALFA", "DRIFT"]) or (
-            any(k in cmd_norm for k in ["DESLOCAMENT", "VENT"]) and any(k in cmd_norm for k in ["TOPO", "INTERPISO", "ELS", "GLOBAL"])
-        ):
+        if "estabilidade" in rotas:
             params["formato"] = "resumo"
             return self.registry.executar_ferramenta("auditar_estabilidade_global", params)
 
         # 6.10. Auditoria de Lajes, Grelha e Flechas
-        if any(k in cmd_norm for k in ["LAJE", "GRELH", "FLECH", "PUNCA"]) and any(k in cmd_norm for k in ["AUDIT", "VERIFIC", "ANALIS", "ESBELTEZ", "MODEL"]):
+        if "lajes" in rotas:
             if "pavimento" not in params:
                 pav_match = re.search(r'(?:no|do|pavimento|piso)\s+([a-zA-Z0-9_\^]+(?:\s+[a-zA-Z0-9_\^]+)?)', cmd_lower)
                 if pav_match:
@@ -172,20 +169,16 @@ class AutqsAgentOrchestrator:
             return self.registry.executar_ferramenta("auditar_lajes_edificio", params)
 
         # 6.11. Quantitativo Global de Materiais e Índices de Consumo
-        if any(k in cmd_norm for k in ["QUANTITATIV", "CONSUM", "MATERIA"]) or (
-            any(k in cmd_norm for k in ["VOLUME", "TAXA"]) and any(k in cmd_norm for k in ["CONCRET", "FORMA", "ACO", "CARBON"])
-        ):
+        if "materiais" in rotas:
             params["formato"] = "resumo"
             return self.registry.executar_ferramenta("extrair_quantitativo_materiais", params)
 
         # 6.12. Memorial Descritivo e de Cálculo Estrutural
-        if any(k in cmd_norm for k in ["MEMORIAL", "JUSTIFICATIV"]) or (
-            any(k in cmd_norm for k in ["RELATORI", "DOCUMENT"]) and any(k in cmd_norm for k in ["EXECUTIV", "CALCUL", "OBRA", "PROJET"])
-        ):
+        if "memorial" in rotas:
             return self.registry.executar_ferramenta("gerar_memorial_descritivo", params)
 
         # 6.13. Limpeza e Padronização de Arquitetura CAD (Geo_*.DWG)
-        if any(k in cmd_norm for k in ["LIMPEZA", "PADRONIZ", "HIGIENIZ"]) and any(k in cmd_norm for k in ["ARQUITETUR", "DWG", "DXF", "GEO_"]):
+        if "limpeza" in rotas:
             if "caminho_arquivo" not in params:
                 # busca caminho de arquivo no comando
                 m_arq = re.search(r'["\']?([a-zA-Z0-9_\-/\\]+\.(?:dwg|dxf))["\']?', comando, re.IGNORECASE)
@@ -195,7 +188,7 @@ class AutqsAgentOrchestrator:
                 return self.registry.executar_ferramenta("padronizar_arquitetura_tqs", params)
 
         # 8. Geração de Planta de Formas de Alvenaria Estrutural (1ª Fiada)
-        if any(k in cmd_norm for k in ["FORMA", "ALVENAR", "FIADA", "DESFIAD", "PRE_FOR", "MODULAC"]):
+        if "formas_alvenaria" in rotas:
             if "pavimento" not in params:
                 pav_match = re.search(r'(?:pavimento|piso)\s+([a-zA-Z0-9_\^]+(?:\s+[a-zA-Z0-9_\^]+)?)', cmd_lower)
                 params["pavimento"] = pav_match.group(1).upper() if pav_match else "TIPO A"
@@ -207,12 +200,7 @@ class AutqsAgentOrchestrator:
             comando,
             re.IGNORECASE,
         )
-        eh_planta_cargas = (
-            "planta" in cmd_lower or "carga" in cmd_lower or "gabarito" in cmd_lower
-            or ("cota" in cmd_lower and any(k in cmd_norm for k in ["REFERENC", "ORIGEM", "PONTO", "0,0"]))
-            or bool(m_coords_avulsas)
-            or ("mudar" in cmd_lower and any(k in cmd_norm for k in ["ORIGEM", "PONTO", "COTA", "REFERENC"]))
-        )
+        eh_planta_cargas = "planta_cargas" in rotas
         if eh_planta_cargas:
             if "caminho_saida_desenho" not in params:
                 params["caminho_saida_desenho"] = "GABARITO.DWG"

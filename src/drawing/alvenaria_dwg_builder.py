@@ -7,6 +7,7 @@ from typing import Dict, Any, List, Optional, Tuple
 from TQS import TQSDwg
 from src.tqs_adapter.tqs_env import configurar_ambiente_tqs_64
 from src.drawing.tqs_dwg_builder import CATALOGO_MOLDURAS_TQS, SELO_LARGURA_CM, SELO_ALTURA_CM
+from src.drawing.moldura import desenhar_moldura, posicao_centralizada, selecionar_formato
 
 configurar_ambiente_tqs_64()
 
@@ -803,109 +804,28 @@ class AlvenariaDwgBuilder:
         - Retângulo reservado do selo técnico no canto inferior direito;
         - Bloco único no Nível 230 / 100.
         """
-        min_x, max_x, min_y, max_y = bounds_conteudo
-        larg_desenho = max_x - min_x
-        alt_desenho = max_y - min_y
-
-        folga_larg = (2.5 + 1.0 + 2.0) * escala
-        folga_alt = (1.0 + 1.0 + 2.0) * escala
-
-        larg_min_papel = (larg_desenho + folga_larg) / escala
-        alt_min_papel = (alt_desenho + folga_alt) / escala
-
+        min_x = bounds_conteudo[0]
         catalogo = [("180-50", 180.0, 50.0), ("A0-45", 118.9, 45.0), ("A0-40", 118.9, 40.0)] + CATALOGO_MOLDURAS_TQS
-        candidatos = []
-        for nome, wp, hp in catalogo:
-            if wp >= larg_min_papel and hp >= alt_min_papel:
-                candidatos.append((nome, wp, hp, wp * hp))
+        sel = selecionar_formato(bounds_conteudo, escala, folga_cm=2.0, catalogo=catalogo)
+        if sel is None:
+            larg_min_papel = ((bounds_conteudo[1] - min_x) + (2.5 + 1.0 + 2.0) * escala) / escala
+            sel = ("180-50", 180.0, 50.0) if larg_min_papel > 120.0 else ("A0-45", 118.9, 45.0)
+        formato_selecionado, wp, hp = sel
 
-        if candidatos:
-            candidatos.sort(key=lambda c: c[3])
-            formato_selecionado = candidatos[0][0]
-            dim_papel = (candidatos[0][1], candidatos[0][2])
-        else:
-            # Fallback para A0-45 ou 180-50
-            if larg_min_papel > 120.0:
-                formato_selecionado = "180-50"
-                dim_papel = (180.0, 50.0)
-            else:
-                formato_selecionado = "A0-45"
-                dim_papel = (118.9, 45.0)
-
-        wp, hp = dim_papel
-        w_proj = wp * escala
-        h_proj = hp * escala
-
+        # Posições fixas herdadas das pranchas de referência do edifício 054 (ver relatório do grupo 3)
         if formato_selecionado == "180-50" or min_x > 5000.0:
-            x0 = 9736.5
-            y0 = -3997.4
-            formato_selecionado = "180-50"
-            wp, hp = 180.0, 50.0
-            w_proj = wp * escala
-            h_proj = hp * escala
+            x0, y0 = 9736.5, -3997.4
+            formato_selecionado, wp, hp = "180-50", 180.0, 50.0
         elif formato_selecionado in ["A0-45", "A0-40"]:
-            x0 = -1359.7
-            y0 = -1606.6
+            x0, y0 = -1359.7, -1606.6
         else:
-            cx_conteudo = (min_x + max_x) / 2.0
-            cy_conteudo = (min_y + max_y) / 2.0
+            x0, y0 = posicao_centralizada(bounds_conteudo, wp, hp, escala)
 
-            cx_papel_util = (wp + 1.5) / 2.0
-            cy_papel_util = hp / 2.0
-
-            x0 = cx_conteudo - (cx_papel_util * escala)
-            y0 = cy_conteudo - (cy_papel_util * escala)
-
-        mx0 = 2.5 * escala
-        my0 = 1.0 * escala
-        mx1 = w_proj - (1.0 * escala)
-        my1 = h_proj - (1.0 * escala)
-
-        # Selo técnico ABNT
-        larg_selo = SELO_LARGURA_CM * escala
-        alt_selo = SELO_ALTURA_CM * escala  # Carimbo + tabela de revisões
-        sx0 = mx1 - larg_selo
-        sy1 = my0 + alt_selo
-
-        # Bloco da Moldura
-        # Desenha a Moldura diretamente em linhas e texto no Nível 230
-        # (Sem BlockInsert para não criar caixa delimitadora gigante que atrapalha seleção de blocos no TQS EAG)
+        # Moldura em linhas soltas no Nível 230 (sem BlockInsert para não criar caixa delimitadora
+        # gigante que atrapalha a seleção de blocos no TQS EAG)
         dwg.draw.level = 230
         dwg.draw.color = -1
-
-        # 1. Borda externa do papel
-        dwg.draw.Line(x0, y0, x0 + w_proj, y0)
-        dwg.draw.Line(x0 + w_proj, y0, x0 + w_proj, y0 + h_proj)
-        dwg.draw.Line(x0 + w_proj, y0 + h_proj, x0, y0 + h_proj)
-        dwg.draw.Line(x0, y0 + h_proj, x0, y0)
-
-        # 2. Margem interna útil
-        dwg.draw.Line(x0 + mx0, y0 + my0, x0 + mx1, y0 + my0)
-        dwg.draw.Line(x0 + mx1, y0 + my0, x0 + mx1, y0 + my1)
-        dwg.draw.Line(x0 + mx1, y0 + my1, x0 + mx0, y0 + my1)
-        dwg.draw.Line(x0 + mx0, y0 + my1, x0 + mx0, y0 + my0)
-
-        # 3. Retângulo delimitador da área do selo
-        dwg.draw.Line(x0 + sx0, y0 + my0, x0 + sx0, y0 + sy1)
-        dwg.draw.Line(x0 + mx1, y0 + sy1, x0 + sx0, y0 + sy1)
-
-        # 4. Marcas de dobra
-        mod_x = 18.5 * escala
-        x_tick = sx0 - mod_x
-        while x_tick > mx0:
-            dwg.draw.Line(x0 + x_tick, y0, x0 + x_tick, y0 + my0)
-            dwg.draw.Line(x0 + x_tick, y0 + my1, x0 + x_tick, y0 + h_proj)
-            x_tick -= mod_x
-
-        mod_y = 14.85 * escala
-        y_tick = mod_y
-        while y_tick < my1:
-            dwg.draw.Line(x0, y0 + y_tick, x0 + mx0, y0 + y_tick)
-            dwg.draw.Line(x0 + mx1, y0 + y_tick, x0 + w_proj, y0 + y_tick)
-            y_tick += mod_y
-
-        # 5. Nome do formato
-        dwg.draw.Text(x0 + mx0 - 0.4 * escala, y0 + my0 + 6.0 * escala, 1.8 * escala, 90.0, formato_selecionado)
+        desenhar_moldura(dwg, formato_selecionado, wp, hp, escala, x0, y0, selo_desde_borda=False)
 
         return formato_selecionado
 

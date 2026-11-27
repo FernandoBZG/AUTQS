@@ -66,3 +66,9 @@ test_*.dwg
 .system_generated/
 .DS_Store
 Thumbs.db
+
+# Scripts experimentais locais (gravam em edifícios reais; não versionar)
+scratch/
+
+# Critérios de cotagem do TQS gravados em tempo de execução
+COTREL.DAT

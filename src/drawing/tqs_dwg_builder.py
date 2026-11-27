@@ -32,81 +32,10 @@ def _corrigir_tqs_draw_level():
 
 _corrigir_tqs_draw_level()
 
-# Área do selo nas molduras oficiais do TQS (C:\TQSW\SUPORTE\NGE\MOLDURAS, A0-45, A1, 180-50...):
-# largura de 17.5 cm encostada na margem direita; altura da margem inferior (y=1.0) até o topo
-# da tabela de revisões (y=29.7, Nível 221), ou seja, carimbo + tabela de revisões = 28.7 cm.
-SELO_LARGURA_CM = 17.5
-SELO_ALTURA_CM = 28.7
-
-# Catálogo oficial de formatos/molduras padronizados do TQS (D:\TQSW\SUPORTE\NGE\MOLDURAS)
-# Todos os arquivos .DWG abaixo existem na instalação nativa do TQS. Largura máxima é rigorosamente 180.0 cm.
-# (Nome, Largura_papel_cm, Altura_papel_cm)
-CATALOGO_MOLDURAS_TQS = [
-    # Formatos ISO Padronizados
-    ("A3", 42.0, 29.7),
-    ("A2", 59.4, 42.0),
-    ("A1", 84.1, 59.4),
-    ("A1L", 118.9, 59.4),
-    ("A0", 118.9, 84.1),
-    # Formatos Estendidos Oficiais TQS em Rolo (95 cm)
-    ("95-40", 95.0, 40.0),
-    ("95-50", 95.0, 50.0),
-    ("95-60", 95.0, 59.4),
-    ("95-70", 95.0, 70.0),
-    ("95-80", 95.0, 80.0),
-    ("95-85", 95.0, 84.1),
-    # Formatos Estendidos Oficiais TQS em Rolo (105 cm)
-    ("105-40", 105.0, 40.0),
-    ("105-50", 105.0, 50.0),
-    ("105-60", 105.0, 59.4),
-    ("105-70", 105.0, 70.0),
-    ("105-80", 105.0, 80.0),
-    ("105-85", 105.0, 84.1),
-    # Formatos Estendidos Oficiais TQS em Rolo (130 cm)
-    ("130-40", 130.0, 40.0),
-    ("130-50", 130.0, 50.0),
-    ("130-60", 130.0, 59.4),
-    ("130-70", 130.0, 70.0),
-    ("130-80", 130.0, 80.0),
-    ("130-85", 130.0, 84.1),
-    # Formatos Estendidos Oficiais TQS em Rolo (140 cm)
-    ("140-40", 140.0, 40.0),
-    ("140-50", 140.0, 50.0),
-    ("140-60", 140.0, 59.4),
-    ("140-70", 140.0, 70.0),
-    ("140-80", 140.0, 80.0),
-    ("140-85", 140.0, 84.1),
-    # Formatos Estendidos Oficiais TQS em Rolo (150 cm)
-    ("150-40", 150.0, 40.0),
-    ("150-50", 150.0, 50.0),
-    ("150-60", 150.0, 59.4),
-    ("150-70", 150.0, 70.0),
-    ("150-80", 150.0, 80.0),
-    ("150-85", 150.0, 84.1),
-    # Formatos Estendidos Oficiais TQS em Rolo (160 cm)
-    ("160-40", 160.0, 40.0),
-    ("160-50", 160.0, 50.0),
-    ("160-60", 160.0, 59.4),
-    ("160-70", 160.0, 70.0),
-    ("160-80", 160.0, 80.0),
-    ("160-85", 160.0, 84.1),
-    # Formatos Estendidos Oficiais TQS em Rolo (170 cm)
-    ("170-40", 170.0, 40.0),
-    ("170-50", 170.0, 50.0),
-    ("170-60", 170.0, 59.4),
-    ("170-70", 170.0, 70.0),
-    ("170-80", 170.0, 80.0),
-    ("170-85", 170.0, 84.1),
-    # Formatos Estendidos Oficiais TQS em Rolo (180 cm - Formato Máximo Oficial)
-    ("180-50", 180.0, 50.0),
-    ("180-55", 180.0, 55.0),
-    ("180-60", 180.0, 59.4),
-    ("180-65", 180.0, 65.0),
-    ("180-70", 180.0, 70.0),
-    ("180-75", 180.0, 75.0),
-    ("180-80", 180.0, 80.0),
-    ("180-85", 180.0, 84.1),
-]
+from src.drawing.moldura import (  # noqa: F401 (reexportados para quem importa daqui)
+    CATALOGO_MOLDURAS_TQS, SELO_ALTURA_CM, SELO_LARGURA_CM,
+    desenhar_moldura, posicao_centralizada, selecionar_formato,
+)
 
 class TQSDwgPlantaDeCargasBuilder:
     """
@@ -1574,107 +1503,23 @@ class TQSDwgPlantaDeCargasBuilder:
         todo o conteúdo do desenho com as margens ABNT/TQS.
         Carrega e insere o bloco nativo .DWG oficial do TQS.
         """
-        min_x, max_x, min_y, max_y = bounds_conteudo
-        larg_desenho = max_x - min_x
-        alt_desenho = max_y - min_y
+        sel = selecionar_formato(bounds_conteudo, escala, folga_cm=4.0)
+        if sel is None:
+            # Fallback de segurança para o maior formato padrão oficial do TQS (180-85)
+            print("[AVISO] O conteúdo não cabe em nenhuma moldura do catálogo na escala "
+                  f"1:{escala}; usando 180-85.")
+            sel = ("180-85", 180.0, 84.1)
+        formato_selecionado, wp, hp = sel
+        x0, y0 = posicao_centralizada(bounds_conteudo, wp, hp, escala)
 
-        formato_selecionado = None
-        dim_papel = None
-
-        # Margem esquerda ABNT: 2.5 cm no papel | Demais margens: 1.0 cm
-        folga_larg = (2.5 + 1.0 + 4.0) * escala # Margens + folga de respiro
-        folga_alt = (1.0 + 1.0 + 4.0) * escala
-
-        larg_min_papel = (larg_desenho + folga_larg) / escala
-        alt_min_papel = (alt_desenho + folga_alt) / escala
-
-        # Encontra todas as molduras catalogadas oficiais que atendem na escala fixada
-        candidatos = []
-        for nome, wp, hp in CATALOGO_MOLDURAS_TQS:
-            if wp >= larg_min_papel and hp >= alt_min_papel:
-                candidatos.append((nome, wp, hp, wp * hp))
-
-        if candidatos:
-            # Escolhe a menor folha oficial por consumo de papel (área mínima)
-            candidatos.sort(key=lambda c: c[3])
-            formato_selecionado = candidatos[0][0]
-            dim_papel = (candidatos[0][1], candidatos[0][2])
-        else:
-            # Fallback de segurança estritamente para o maior formato padrão oficial do TQS (180-85)
-            formato_selecionado = "180-85"
-            dim_papel = (180.0, 84.1)
-
-        wp, hp = dim_papel
-        w_proj = wp * escala
-        h_proj = hp * escala
-
-        # Centraliza o conteúdo útil da prancha dentro das margens da moldura
-        cx_conteudo = (min_x + max_x) / 2.0
-        cy_conteudo = (min_y + max_y) / 2.0
-
-        # Margem esquerda da folha é 2.5cm e direita é 1.0cm -> centro útil do papel em X é (wp + 1.5)/2
-        cx_papel_util = (wp + 1.5) / 2.0
-        cy_papel_util = hp / 2.0
-
-        x0 = cx_conteudo - (cx_papel_util * escala)
-        y0 = cy_conteudo - (cy_papel_util * escala)
-        x1 = x0 + w_proj
-        y1 = y0 + h_proj
-
-        # Margens ABNT / TQS
-        mx0 = 2.5 * escala
-        my0 = 1.0 * escala
-        mx1 = w_proj - (1.0 * escala)
-        my1 = h_proj - (1.0 * escala)
-
-        # Área reservada para o selo no canto inferior direito (apenas demarcação, sem detalhes de carimbo)
-        larg_selo = SELO_LARGURA_CM * escala
-        alt_selo = SELO_ALTURA_CM * escala  # Carimbo + tabela de revisões
-        sx0 = mx1 - larg_selo
-        sy1 = my0 + alt_selo
-
-        # Criação do Bloco de Projeção da Moldura (Nível 100, cor do nível)
+        # Bloco da moldura (Nível 100, cor do nível), desenhado na origem e inserido em (x0, y0)
         dwg.draw.level = 100
         dwg.draw.color = -1
 
         dwg.draw.BlockOpen(formato_selecionado, 0.0, 0.0)
         dwg.draw.level = 100
         dwg.draw.color = -1
-
-        # 1. Borda externa do papel
-        dwg.draw.Line(0.0, 0.0, w_proj, 0.0)
-        dwg.draw.Line(w_proj, 0.0, w_proj, h_proj)
-        dwg.draw.Line(0.0, 0.0, 0.0, h_proj)
-        dwg.draw.Line(0.0, h_proj, w_proj, h_proj)
-
-        # 2. Margem interna útil
-        dwg.draw.Line(mx0, my0, mx1, my0)
-        dwg.draw.Line(mx1, my0, mx1, my1)
-        dwg.draw.Line(mx0, my1, mx1, my1)
-        dwg.draw.Line(mx0, my1, mx0, my0)
-
-        # 3. Retângulo delimitador da área do selo (sem linhas internas de carimbo nem textos)
-        dwg.draw.Line(sx0, 0.0, sx0, sy1)
-        dwg.draw.Line(mx1, sy1, sx0, sy1)
-
-        # 4. Marcas de dobra (módulos de 18.5 cm na horizontal e 14.85 cm na vertical)
-        mod_x = 18.5 * escala
-        x_tick = sx0 - mod_x
-        while x_tick > mx0:
-            dwg.draw.Line(x_tick, 0.0, x_tick, my0)
-            dwg.draw.Line(x_tick, my1, x_tick, h_proj)
-            x_tick -= mod_x
-
-        mod_y = 14.85 * escala
-        y_tick = mod_y
-        while y_tick < my1:
-            dwg.draw.Line(0.0, y_tick, mx0, y_tick)
-            dwg.draw.Line(mx1, y_tick, w_proj, y_tick)
-            y_tick += mod_y
-
-        # 5. Nome do formato em texto simples na margem esquerda
-        dwg.draw.Text(mx0 - 0.4 * escala, my0 + 6.0 * escala, 1.8 * escala, 90.0, formato_selecionado)
-
+        desenhar_moldura(dwg, formato_selecionado, wp, hp, escala, selo_desde_borda=True)
         dwg.draw.BlockClose()
 
         # Inserção do bloco no ponto (x0, y0) da prancha no Nível 100

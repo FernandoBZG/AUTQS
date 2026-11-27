@@ -5,6 +5,7 @@ from src.skills.case_06_analise_vigas.beam_analyzer import (
     TQSBeamAnalyzer,
     AuditoriaVigasResultado,
 )
+from src.tqs_adapter.pavimentos import mensagem_pavimento_nao_encontrado
 
 
 class AnaliseVigasSkill(BaseSkill):
@@ -59,7 +60,9 @@ class AnaliseVigasSkill(BaseSkill):
                 "status": "erro",
                 "sucesso": False,
                 "edificio": edificio_nome,
-                "erro": f"Nenhuma pasta de vigas calculada encontrada para '{pavimento or 'todos'}' no edifício '{edificio_nome}'."
+                "erro": "Nenhuma pasta de vigas calculada encontrada. " + mensagem_pavimento_nao_encontrado(
+                    pavimento or "todos", analyzer.listar_pastas_vigas()
+                ),
             }
 
         # Status consolidado

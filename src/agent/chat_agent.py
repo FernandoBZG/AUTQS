@@ -4,6 +4,7 @@ from typing import Dict, Any, List, Optional
 from src.agent.orchestrator import AutqsAgentOrchestrator
 from src.tqs_adapter.building_reader import TQSBuildingReader
 from src.agent.gemini_client import GeminiClient
+from src.agent.roteador import intencoes
 
 def _fz_minimo(p: Dict[str, Any]) -> Optional[float]:
     """Menor Fz conhecido do pilar (FZ MIN do PORLID, senão FZ MAX); None se o pilar não tem reação."""
@@ -130,6 +131,7 @@ class AutqsChatAgent:
 
         from src.tqs_adapter.model_editor import normalizar_texto
         msg_norm = normalizar_texto(msg)
+        rotas = intencoes(msg)  # roteador único (src/agent/roteador.py)
 
         # Resposta a solicitação de aprovação pendente no chat
         if self.modificacao_pendente:
@@ -242,7 +244,7 @@ class AutqsChatAgent:
             }
 
         # 2. Pergunta sobre edifícios disponíveis
-        if any(k in msg_norm for k in ["QUAI", "LIST", "MOSTR", "EXIB"]) and any(k in msg_norm for k in ["EDIF", "PROJET", "OBRA"]) and not any(k in msg_norm for k in ["PAVIMENT", "PISO", "VIGA", "LAJE", "PILAR", "CARGA"]):
+        if "listar_edificios" in rotas:
             edificios = TQSBuildingReader.listar_edificios_disponiveis()
             linhas = ["### 🏢 Edifícios Detectados no Sistema TQS:\n"]
             for e in edificios:
@@ -344,7 +346,7 @@ class AutqsChatAgent:
             }
 
         # 4. CONSULTA / LISTAGEM NO MODELADOR ESTRUTURAL
-        pediu_consulta_modelo = any(k in msg_norm for k in ["LIST", "QUAI", "MOSTR", "VER", "EXIB"]) and any(k in msg_norm for k in ["PAVIMENT", "PISO", "VIGA", "LAJE", "PILAR", "CARGA"])
+        pediu_consulta_modelo = "consulta_modelo" in rotas
         if pediu_consulta_modelo:
             try:
                 res_cons = self.orchestrator.processar_comando_local(msg, {"edificio_nome": self.edificio_ativo or "054"})
@@ -411,7 +413,7 @@ class AutqsChatAgent:
                 pass
 
         # 5. Solicitação de Processamento Estrutural do Edifício
-        pediu_processamento = any(k in msg_norm for k in ["PROCESS", "CALCUL", "ROD", "EXECUT", "PORTIC", "RECALCUL"]) and any(k in msg_norm for k in ["EDIFIC", "OBRA", "PROJET", "PORTIC", "ESTRUTUR", "MODEL"])
+        pediu_processamento = "processamento" in rotas
         if pediu_processamento:
             edificio_alvo = self.edificio_ativo or "054"
             num_match = re.search(r'\b(0\d{2}|\d{3,4})\b', msg)
@@ -432,7 +434,7 @@ class AutqsChatAgent:
                 }
 
         # 6.0. Comparação de Geometrias e Plantas de Formas (Case 07: Diff DWG)
-        pediu_comparacao = any(k in msg_norm for k in ["COMPAR", "DIFF", "ALTERA", "MUDOU", "DIFERENC", "SOBREPOSI"]) and any(k in msg_norm for k in ["GEOMETR", "FORMA", "PLANTA", "ARQUITETUR", "DESENHO", "PROJETO"])
+        pediu_comparacao = "comparacao" in rotas
         if pediu_comparacao:
             edificio_alvo = self.edificio_ativo or "054"
             pav_match = re.search(r'(?:pavimento|piso)\s+([a-zA-Z0-9_\^]+(?:\s+[a-zA-Z0-9_\^]+)?)', msg_lower)
@@ -466,7 +468,7 @@ class AutqsChatAgent:
                 }
 
         # 6.01. Dimensionamento e Auditoria de Pilares (Case 04)
-        pediu_pilares = any(k in msg_norm for k in ["DIMENSION", "OTIMIZ", "AUDIT"]) and any(k in msg_norm for k in ["PILAR", "PILARES"])
+        pediu_pilares = "pilares" in rotas
         if pediu_pilares:
             edificio_alvo = self.edificio_ativo or "054"
             p_match = re.search(r'\b[pP](\d+)\b', msg)
@@ -494,7 +496,7 @@ class AutqsChatAgent:
                 }
 
         # 6.02. Verificação de Consistência da Planta de Formas (Case 05)
-        pediu_consistencia = any(k in msg_norm for k in ["CONSIST", "ERRO", "INCONFORM", "AUDIT"]) and any(k in msg_norm for k in ["FORMA", "PLANTA", "APOIO"])
+        pediu_consistencia = "consistencia" in rotas
         if pediu_consistencia:
             edificio_alvo = self.edificio_ativo or "054"
             pav_match = re.search(r'(?:pavimento|piso)\s+([a-zA-Z0-9_\^]+(?:\s+[a-zA-Z0-9_\^]+)?)', msg_lower)
@@ -522,7 +524,7 @@ class AutqsChatAgent:
                 }
 
         # 6.03. Análise de Esforços, Cortante e Bielas de Vigas (Case 06)
-        pediu_vigas = any(k in msg_norm for k in ["BIELA", "CORTANT", "ESFORC", "DIMENSION"]) and any(k in msg_norm for k in ["VIGA", "VIGAS"])
+        pediu_vigas = "vigas" in rotas
         if pediu_vigas:
             edificio_alvo = self.edificio_ativo or "054"
             pav_match = re.search(r'(?:pavimento|piso)\s+([a-zA-Z0-9_\^]+(?:\s+[a-zA-Z0-9_\^]+)?)', msg_lower)
@@ -552,9 +554,7 @@ class AutqsChatAgent:
                 }
 
         # 6.04. Estabilidade Global e ELS (Case 08: GamaZ, FAVt, Alfa e Deslocamentos de Vento)
-        pediu_estabilidade = any(k in msg_norm for k in ["ESTABILID", "GAMAZ", "GAMA_Z", "ALFA", "DRIFT"]) or (
-            any(k in msg_norm for k in ["DESLOCAMENT", "VENT"]) and any(k in msg_norm for k in ["TOPO", "INTERPISO", "ELS", "GLOBAL"])
-        )
+        pediu_estabilidade = "estabilidade" in rotas
         if pediu_estabilidade:
             edificio_alvo = self.edificio_ativo or "054"
             try:
@@ -577,7 +577,7 @@ class AutqsChatAgent:
                 }
 
         # 6.05. Auditoria de Lajes, Grelhas e Flechas (Case 09)
-        pediu_lajes = any(k in msg_norm for k in ["LAJE", "GRELH", "FLECH", "PUNCA"]) and any(k in msg_norm for k in ["AUDIT", "VERIFIC", "ANALIS", "ESBELTEZ", "MODEL"])
+        pediu_lajes = "lajes" in rotas
         if pediu_lajes:
             edificio_alvo = self.edificio_ativo or "054"
             pav_match = re.search(r'(?:pavimento|piso)\s+([a-zA-Z0-9_\^]+(?:\s+[a-zA-Z0-9_\^]+)?)', msg_lower)
@@ -605,9 +605,7 @@ class AutqsChatAgent:
                 }
 
         # 6.06. Quantitativo Global de Materiais e Índices de Consumo (Case 10)
-        pediu_materiais = any(k in msg_norm for k in ["QUANTITATIV", "CONSUM", "MATERIA"]) or (
-            any(k in msg_norm for k in ["VOLUME", "TAXA"]) and any(k in msg_norm for k in ["CONCRET", "FORMA", "ACO", "CARBON"])
-        )
+        pediu_materiais = "materiais" in rotas
         if pediu_materiais:
             edificio_alvo = self.edificio_ativo or "054"
             try:
@@ -630,9 +628,7 @@ class AutqsChatAgent:
                 }
 
         # 6.07. Memorial Descritivo e Justificativo de Cálculo (Case 11)
-        pediu_memorial = any(k in msg_norm for k in ["MEMORIAL", "JUSTIFICATIV"]) or (
-            any(k in msg_norm for k in ["RELATORI", "DOCUMENT"]) and any(k in msg_norm for k in ["EXECUTIV", "CALCUL", "OBRA", "PROJET"])
-        )
+        pediu_memorial = "memorial" in rotas
         if pediu_memorial:
             edificio_alvo = self.edificio_ativo or "054"
             try:
@@ -656,7 +652,7 @@ class AutqsChatAgent:
                 }
 
         # 6.08. Limpeza e Padronização de Arquitetura CAD (Case 12)
-        pediu_limpeza = any(k in msg_norm for k in ["LIMPEZA", "PADRONIZ", "HIGIENIZ"]) and any(k in msg_norm for k in ["ARQUITETUR", "DWG", "DXF", "GEO_"])
+        pediu_limpeza = "limpeza" in rotas
         if pediu_limpeza:
             m_arq = re.search(r'["\']?([a-zA-Z0-9_\-/\\]+\.(?:dwg|dxf))["\']?', msg, re.IGNORECASE)
             caminho_arq = m_arq.group(1) if m_arq else None
@@ -682,7 +678,7 @@ class AutqsChatAgent:
                     }
 
         # 6. Solicitação de Geração de Planta de Formas de Alvenaria Estrutural
-        pediu_formas_alvenaria = any(k in msg_norm for k in ["FORMA", "ALVENAR", "FIADA", "DESFIAD", "PRE_FOR", "MODULAC"]) and any(k in msg_norm for k in ["PLANTA", "DESENH", "GERAR", "EMITIR", "CRIAR", "FAZER", "TRANSFORM"])
+        pediu_formas_alvenaria = "formas_alvenaria" in rotas
         if pediu_formas_alvenaria:
             edificio_alvo = self.edificio_ativo or "054"
             pav_match = re.search(r'(?:pavimento|piso)\s+([a-zA-Z0-9_\^]+(?:\s+[a-zA-Z0-9_\^]+)?)', msg_lower)
@@ -731,14 +727,7 @@ class AutqsChatAgent:
             msg,
             re.IGNORECASE,
         )
-        pediu_gerar_planta = (
-            ("planta" in msg_lower and any(k in msg_lower for k in ["carga", "loca", "gerar", "desenh", "emitir", "funda"]))
-            or any(k in msg_lower for k in ["gerar dwg", "criar dwg", "emitir prancha", "desenhar prancha", "gerar prancha", "gabarito"])
-            or "gabarito" in msg_lower
-            or ("cota" in msg_lower and any(k in msg_norm for k in ["REFERENC", "ORIGEM", "PONTO", "0,0"]))
-            or bool(m_coords_avulsas)
-            or ("mudar" in msg_lower and any(k in msg_norm for k in ["ORIGEM", "PONTO", "COTA", "REFERENC"]))
-        )
+        pediu_gerar_planta = "planta_cargas" in rotas
         if pediu_gerar_planta:
             edificio_alvo = self.edificio_ativo or "054"
             # Detecção de origem de cotas
@@ -850,7 +839,7 @@ class AutqsChatAgent:
                 }
 
         # 6. Perguntas analíticas sobre os pilares (maiores cargas, tração, etc.)
-        if any(k in msg_lower for k in ["maior", "pesado", "mais carregado", "critico", "ranking"]):
+        if "ranking" in rotas:
             if not self.ultima_planta:
                 self._carregar_cargas_somente_leitura()
 
@@ -874,7 +863,7 @@ class AutqsChatAgent:
                 }
 
         # 7. Pergunta sobre pilares com tração
-        if any(k in msg_lower for k in ["tracao", "tração", "arrancamento", "negativo"]):
+        if "tracao" in rotas:
             if not self.ultima_planta:
                 self._carregar_cargas_somente_leitura()
 

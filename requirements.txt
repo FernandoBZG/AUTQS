@@ -18,3 +18,7 @@ pandas>=2.0.0
 
 # Gráficos interativos para o dashboard web
 plotly>=5.18.0
+
+# Leitura do PDF plotado na revisão de pranchas (Case 15): sem ele a conferência
+# do PDF não é feita
+PyMuPDF>=1.24.0
