@@ -39,7 +39,7 @@ class ConsistenciaPlantaSkill(BaseSkill):
         self,
         edificio_nome: str,
         pavimento: Optional[str] = None,
-        executar_tqs: bool = True,
+        executar_tqs: bool = False,
         desenhar_formas: bool = True,
         formato: str = "resumo",
         timeout_segundos: int = 240,
@@ -49,7 +49,8 @@ class ConsistenciaPlantaSkill(BaseSkill):
         Executa a verificação de consistência da planta de formas.
         :param edificio_nome: Nome ou código do edifício TQS (ex: '054').
         :param pavimento: Pavimento específico (ex: 'terreo', '2 pavimento') ou None para todos.
-        :param executar_tqs: Se True, dispara 'PROC FORMAS 2 1' no motor do TQS. Se False, analisa relatórios já gerados.
+        :param executar_tqs: Se True, dispara 'PROC FORMAS 2 1' no motor do TQS (exige aprovação do
+            usuário quando chamado pelo ToolsRegistry). Padrão False: analisa relatórios já gerados.
         :param desenhar_formas: Se True, gera desenho FOR00xx.DWG durante a consistência.
         :param formato: 'resumo' (compacto para chat/LLM), 'terminal' (tabela) ou 'json'.
         :param timeout_segundos: Timeout para o lote do TQS.

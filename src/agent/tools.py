@@ -15,6 +15,27 @@ from src.skills.case_13_geometria_ca.skill import GeometriaCASkill
 from src.skills.case_15_revisao_plantas.skill import RevisaoPlantasSkill
 from src.tqs_adapter.model_editor import TQSModelEditor
 
+# Ferramentas que processam o edifício no TQS ou gravam no modelo estrutural.
+# Só rodam com aprovado=True; sem isso o registro devolve status "aguardando_aprovacao".
+FERRAMENTAS_QUE_ALTERAM_TQS = {
+    "processar_edificio",
+    "editar_viga_modelo",
+    "editar_laje_modelo",
+    "editar_pilar_modelo",
+    "adicionar_carga_modelo",
+}
+
+
+def exige_aprovacao(nome_funcao: str, argumentos: Dict[str, Any]) -> bool:
+    """True se a chamada processa o TQS ou altera o modelo e, portanto, precisa de OK explícito."""
+    if nome_funcao in FERRAMENTAS_QUE_ALTERAM_TQS:
+        return True
+    # A consistência só mexe no TQS quando pede para reprocessar (PROC FORMAS 2 1).
+    if nome_funcao == "verificar_consistencia_planta" and argumentos.get("executar_tqs"):
+        return True
+    return False
+
+
 class ToolsRegistry:
     """
     Registro centralizado de ferramentas (Tools / Function Calling)
@@ -179,7 +200,7 @@ class ToolsRegistry:
                             },
                             "executar_tqs": {
                                 "type": "boolean",
-                                "description": "Se verdadeiro, dispara o processamento no TQS para recalcular a consistência. Se falso, analisa listagens já existentes."
+                                "description": "Padrão falso (analisa listagens já existentes). Se verdadeiro, dispara o processamento no TQS para recalcular a consistência, o que exige aprovação do usuário."
                             },
                             "formato": {
                                 "type": "string",
@@ -581,7 +602,25 @@ class ToolsRegistry:
     def executar_ferramenta(self, nome_funcao: str, argumentos: Dict[str, Any]) -> Dict[str, Any]:
         """
         Executa uma ferramenta chamada pela IA ou pelos controladores de UI.
+
+        Ferramentas que processam o TQS ou alteram o modelo (ver exige_aprovacao) só
+        rodam com argumentos["aprovado"] == True. Sem isso, nada é executado e o retorno
+        traz status "aguardando_aprovacao" com a ferramenta e os parâmetros a confirmar.
         """
+        argumentos = dict(argumentos or {})
+        if exige_aprovacao(nome_funcao, argumentos):
+            if argumentos.pop("aprovado", False) is not True:
+                return {
+                    "status": "aguardando_aprovacao",
+                    "sucesso": False,
+                    "ferramenta": nome_funcao,
+                    "parametros": argumentos,
+                    "mensagem": (
+                        f"'{nome_funcao}' processa o edifício no TQS ou altera o modelo estrutural "
+                        "e só é executada com aprovação explícita do usuário."
+                    ),
+                }
+
         if nome_funcao in self._skills:
             skill = self._skills[nome_funcao]
             if nome_funcao == "gerar_planta_de_cargas":

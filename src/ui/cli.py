@@ -179,6 +179,7 @@ def main():
     parser.add_argument("--espessura", type=float, default=None, help="Espessura da laje em cm")
     parser.add_argument("--desnivel", type=float, default=None, help="Desnível / rebaixo em cm")
     parser.add_argument("--carga-perm", type=float, default=None, help="Carga permanente g em tf/m²")
+    parser.add_argument("--carga-acid", type=float, default=None, help="Carga acidental q em tf/m²")
     parser.add_argument("--consistencia", "--verificar-consistencia", "-vc", action="store_true", help="Verifica e audita a consistência da planta de formas no TQS (apoios nulos, nós fora do pilar, vigas sem apoio)")
     parser.add_argument("--sem-processar", action="store_true", help="Na verificação de consistência, analisa listagens existentes sem redisparar o cálculo batch do TQS")
     parser.add_argument("--analisar-vigas", "-av", action="store_true", help="Analisa e audita esforços, dimensionamento e bielas das vigas no TQS (RELGER, ESTRIB, RESESTERR)")
@@ -443,12 +444,23 @@ def main():
         print(f"Pavimento:  {pav_str}")
         print(f"Processamento: {'Recalcular via TQS (PROC FORMAS 2 1)' if executar_tqs else 'Leitura rápida de relatórios existentes'}\n")
 
-        res = orchestrator.registry.executar_ferramenta("verificar_consistencia_planta", {
+        params_cons = {
             "edificio_nome": ed,
             "pavimento": args.pavimento,
             "executar_tqs": executar_tqs,
             "formato": formato
-        })
+        }
+        if executar_tqs:
+            if not solicitar_aprovacao_generica(
+                "Processamento no TQS",
+                f"Edifício: {ed}\nPavimento: {pav_str}\nAção: PROC FORMAS 2 1 (recalcula a consistência no TQS)",
+                "Executar o processamento no TQS? (use --sem-processar para só ler as listagens)",
+                auto_aprovar=args.sim,
+            ):
+                return
+            params_cons["aprovado"] = True
+
+        res = orchestrator.registry.executar_ferramenta("verificar_consistencia_planta", params_cons)
 
         if args.json:
             print(json.dumps(res.get("dados_pavimentos", res), indent=2, ensure_ascii=False))
@@ -697,6 +709,13 @@ def main():
         print(f"   AUTQS - PROCESSAMENTO ESTRUTURAL TQS: EDIFÍCIO {args.edificio}")
         print(f"   Modo de Análise: {tipo_p.upper()}")
         print(f"=========================================================")
+        if not solicitar_aprovacao_generica(
+            "Processamento no TQS",
+            f"Edifício: {args.edificio}\nModo: {tipo_p}\nApós processar, gera a planta de cargas em ESPACIAL.",
+            "Executar o processamento no TQS?",
+            auto_aprovar=args.sim,
+        ):
+            return
         print("Disparando rotinas em lote no TQS V25...")
 
         res = orchestrator.registry.executar_ferramenta(
@@ -704,7 +723,8 @@ def main():
             {
                 "edificio_nome": args.edificio,
                 "tipo_processamento": tipo_p,
-                "gerar_planta_apos_processar": True
+                "gerar_planta_apos_processar": True,
+                "aprovado": True,
             }
         )
 
@@ -803,12 +823,9 @@ def main():
             # Backup de segurança da versão anterior caso já exista
             if os.path.exists(copia_espacial) and os.path.isfile(copia_espacial):
                 try:
-                    from datetime import datetime
-                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    nome_base, ext = os.path.splitext(nome_dwg_espacial)
-                    bkp_ts = os.path.join(pasta_espacial, f"{nome_base}_BKP_{ts}{ext}")
-                    shutil.copy2(copia_espacial, bkp_ts)
-                    print(f"[BACKUP] Backup da versão anterior salvo em: '{os.path.basename(bkp_ts)}'.")
+                    from src.core.backup import criar_backup
+                    bkp_ts = criar_backup(copia_espacial)
+                    print(f"[BACKUP] Backup da versão anterior salvo em: '{bkp_ts}'.")
                 except Exception:
                     pass
 

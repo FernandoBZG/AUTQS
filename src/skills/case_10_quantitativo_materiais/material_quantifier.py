@@ -184,6 +184,8 @@ class TQSMaterialQuantifier:
         # 2. Leitura de RESEST3.TXT (Resumo de materiais por piso)
         # Formato: Bitola \t ... \t Aço \t Concreto \t Forma \t Área
         pisos_map: Dict[str, PisoQuantitativo] = {}
+        # Se o RESEST8 trouxe o "Total geral", ele prevalece; senão soma-se piso a piso.
+        somar_carbono_por_piso = res.carbono_total_kgco2 == 0.0
         if os.path.exists(p_resest3):
             with open(p_resest3, "r", encoding="latin1", errors="replace") as f:
                 for line in f:
@@ -236,7 +238,7 @@ class TQSMaterialQuantifier:
                         res.volume_concreto_total_m3 += conc_m3
                         res.area_formas_total_m2 += forma_m2
                         res.peso_aco_total_kg += aco_kg
-                        if res.carbono_total_kgco2 == 0.0:
+                        if somar_carbono_por_piso:
                             res.carbono_total_kgco2 += carb
 
         # 3. Leitura de RESEST4.TXT (Índices calculados pelo TQS)

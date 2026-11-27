@@ -34,7 +34,7 @@ Esta skill gera automaticamente o desenho nativo TQS `GERAIS\CORTE ESQUEMÁTICO.
 - **Nível 257 (Cor 7):** Especificações de materiais por pavimento (`BLOCO`, `ARGAMASSA`, `GRAUTE`, `PRISMA (OCO)`) e notas normativas (NBR 16868-3).
 - **Nível 200 (Cor 7) & Nível 221 (Cor 11):** Linhas de nível e símbolo triangular de cota.
 - **Nível 18 (Cor 2 - Amarelo):** Faixas verticais laterais indicando o sistema estrutural (`ALVENARIA ESTRUTURAL` / `PÓRTICO DE CONCRETO ARMADO`).
-- **Formato de saída:** Gera **apenas `.DWG` nativo do TQS** (nunca `.DXF`), salvando em `<edificio>\GERAIS\CORTE ESQUEMÁTICO.DWG` (com backup `.BAK` se já existir).
+- **Formato de saída:** Gera **apenas `.DWG` nativo do TQS** (nunca `.DXF`), salvando em `<edificio>\GERAIS\CORTE ESQUEMÁTICO.DWG` (com backup em `GERAIS\backup_claude` se já existir).
 
 ---
 

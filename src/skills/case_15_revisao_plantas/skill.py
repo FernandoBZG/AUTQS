@@ -21,6 +21,7 @@ import unicodedata
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
+from src.core.backup import criar_backup, timestamp_backup
 from src.skills.base_skill import BaseSkill
 from src.skills.case_15_revisao_plantas.cpl import (
     ErroCPL, PlantaCPL, Revisao, ler_cpl, listar_cpls, TIPO_CARIMBO,
@@ -424,9 +425,7 @@ class RevisaoPlantasSkill(BaseSkill):
         # ---- Gravação aprovada ----
         if _ler_bytes(pl.caminho) != original_bytes:
             return self._erro(f"{pl.caminho} mudou durante a operação; nada foi gravado. Rode a emissão de novo.")
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup = f"{pl.caminho}_BKP_{ts}"   # extensão diferente de .CPL: o editor não lista como planta
-        shutil.copy2(pl.caminho, backup)
+        backup = criar_backup(pl.caminho)   # em PLANTAS\backup_claude: o editor não lista como planta
         carimbo_copiado = None
         try:
             if troca_fase:
@@ -557,10 +556,7 @@ class RevisaoPlantasSkill(BaseSkill):
             base["resumo_executivo"] = resumo("⚠️ Carimbo pronto para gravar — aguardando aprovação")
             return base
 
-        backup = None
-        if os.path.exists(destino):
-            backup = f"{destino}_BKP_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-            shutil.copy2(destino, backup)
+        backup = criar_backup(destino)
         try:
             shutil.copy2(gerado["caminho"], destino)
             restantes = [t for t in cb._ler_textos(destino) if t[7].strip().startswith("%")]
@@ -595,7 +591,7 @@ class RevisaoPlantasSkill(BaseSkill):
         gravar = [d for _, d in saidas] + ([destino_cr] if carimbo and destino_cr else [])
         existentes = [g for g in gravar if os.path.exists(g)]
         if existentes:
-            avisos.append("Será feito backup (_BKP_<data>) de: " + ", ".join(os.path.basename(e) for e in existentes) + ".")
+            avisos.append("Será feito backup (em PLANTAS\\backup_claude) de: " + ", ".join(os.path.basename(e) for e in existentes) + ".")
         if pl.titulo_com_caractere_invalido:
             avisos.append("O título desta planta tem um caractere inválido gravado; corrija-o no Editor de Plantas.")
 
@@ -631,14 +627,14 @@ class RevisaoPlantasSkill(BaseSkill):
             base["resumo_executivo"] = resumo(f"⚠️ {nome}.PDF/.DXF prontos para gravar em PLANTAS — aguardando aprovação")
             return base
 
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        ts = timestamp_backup()
         copias = saidas + ([(carimbo["caminho"], destino_cr)] if carimbo and destino_cr else [])
         backups: Dict[str, str] = {}
         try:
             for origem, destino in copias:
-                if os.path.exists(destino):
-                    backups[destino] = f"{destino}_BKP_{ts}"
-                    shutil.copy2(destino, backups[destino])
+                bkp = criar_backup(destino, ts)
+                if bkp:
+                    backups[destino] = bkp
                 shutil.copy2(origem, destino)
         except Exception as e:
             for destino, bkp in backups.items():

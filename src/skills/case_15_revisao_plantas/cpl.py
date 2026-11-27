@@ -33,7 +33,10 @@ LINHA_TITULO = 4          # índice 0-based da linha do título
 LINHA_PRIMEIRA_REVISAO = 5
 MAX_LINHAS_TABELA = 11    # a moldura oficial tem as linhas 00..10
 MAX_CARACTERES_DESCRICAO = 60
-RE_DATA = re.compile(r"^\d{2}/\d{2}/\d{4}$")
+# Aceita datas digitadas com ano incompleto no Editor de Plantas (ex.: "25/10/204" no Zuckhan):
+# o histórico é só lido e regravado como está; datas novas continuam saindo em dd/mm/aaaa.
+RE_DATA = re.compile(r"^\d{1,2}/\d{1,2}/\d{2,4}$")
+RE_DATA_NOVA = re.compile(r"^\d{2}/\d{2}/\d{4}$")
 RE_NUMERO = re.compile(r"^\s*\d+\s*$")
 TIPO_DESENHO = 0
 TIPO_CARIMBO = 2
@@ -217,7 +220,7 @@ class PlantaCPL:
                 f"A tabela de revisões da moldura tem só {MAX_LINHAS_TABELA} linhas (R00 a R{MAX_LINHAS_TABELA - 1:02d}); "
                 f"R{rev.numero:02d} não apareceria no selo."
             )
-        if not RE_DATA.match(rev.data):
+        if not RE_DATA_NOVA.match(rev.data):
             problemas.append(f"Data '{rev.data}' fora do formato dd/mm/aaaa.")
         if not rev.autor.strip():
             problemas.append("Autor da revisão vazio.")

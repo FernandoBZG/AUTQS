@@ -101,7 +101,12 @@ class AutqsAgentOrchestrator:
             return self.registry.executar_ferramenta(mut["funcao"], mut["parametros"])
 
         # 6. Listagem de elementos de um pavimento (vigas, lajes, pilares)
-        if any(k in cmd_norm for k in ["LIST", "QUAI", "MOSTR", "VER", "EXIB"]) and any(k in cmd_norm for k in ["VIGA", "LAJE", "PILAR", "CARGA"]):
+        # Pedidos de análise/comparação/ranking têm rotas próprias abaixo ("VER" casa com "VERIFIC").
+        termos_outras_rotas = ["ANALIS", "VERIFIC", "AUDIT", "DIMENSION", "ESFORC", "BIELA", "CORTANT",
+                               "COMPAR", "DIFF", "MAIS", "MAIOR", "MENOR", "CARREGAD", "TRAC", "OTIMIZ"]
+        if (any(k in cmd_norm for k in ["LIST", "QUAI", "MOSTR", "VER", "EXIB"])
+                and any(k in cmd_norm for k in ["VIGA", "LAJE", "PILAR", "CARGA"])
+                and not any(k in cmd_norm for k in termos_outras_rotas)):
             if "pavimento" not in params:
                 pav_match = re.search(r'(?:no|do|pavimento|piso)\s+([a-zA-Z0-9_\^]+(?:\s+[a-zA-Z0-9_\^]+)?)', cmd_lower)
                 params["pavimento"] = pav_match.group(1) if pav_match else "terreo"
@@ -116,6 +121,7 @@ class AutqsAgentOrchestrator:
                 params["tipo_elemento"] = "cargas"
             else:
                 params["tipo_elemento"] = "todos"
+            return self.registry.executar_ferramenta("listar_elementos_pavimento", params)
 
         # 6.5. Análise e Auditoria Estrutural de Vigas (Esforços, Dimensionamento e Bielas)
         if any(k in cmd_norm for k in ["ANALIS", "VERIFIC", "AUDIT", "DIMENSION", "ESFORC", "BIELA", "CORTANT"]) and any(k in cmd_norm for k in ["VIGA"]):

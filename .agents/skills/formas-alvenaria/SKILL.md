@@ -21,7 +21,7 @@ Para evitar contaminação de geometria, linhas duplicadas e conflitos visuais n
 ### 1. Base da Planta e Geometria Fiel
 * A base geométrica deve ser **sempre** o `DesFiad1.DWG` do pavimento correspondente.
 * Jamais reconstruir ou redesenhar blocos a partir de esboços quando o desenho nativo do Alvest estiver disponível.
-* Realizar backup automático antes de sobrescrever qualquer arquivo existente.
+* Realizar backup automático (na subpasta `backup_claude`) antes de sobrescrever qualquer arquivo existente.
 
 ### 2. Isolamento Estrito de Pavimentos Diferenciados (Regra Anti-Conflito)
 * **Pavimentos Diferenciados** (ex: 2º Pavimento, 1º Pavimento, Térreo, Transição, Cobertura) possuem balanços de sacada e contornos de laje específicos que diferem do Pavimento Tipo.
