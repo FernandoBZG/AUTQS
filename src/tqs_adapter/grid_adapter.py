@@ -61,7 +61,7 @@ class GridTabelaCargasAdapter:
             ycg_str = f"{pilar.baricentro.y / 100.0:.3f}" if pilar.baricentro else "-"
             
             nk_max_str = f"{pilar.esforcos.nk_max:.1f}" if pilar.esforcos else "0.0"
-            nk_min_str = f"{pilar.esforcos.nk_min:.1f}" if pilar.esforcos else "0.0"
+            nk_min_str = f"{pilar.esforcos.nk_min:.1f}" if pilar.esforcos and pilar.esforcos.nk_min is not None else "-"
             mx_str = f"{pilar.esforcos.mxk:.2f}" if pilar.esforcos else "0.00"
             my_str = f"{pilar.esforcos.myk:.2f}" if pilar.esforcos else "0.00"
             hx_str = f"{pilar.esforcos.hx:.2f}" if pilar.esforcos else "0.00"

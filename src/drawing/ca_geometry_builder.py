@@ -6,6 +6,18 @@ from typing import Dict, Any, Optional, List, Tuple
 
 from src.tqs_adapter.tqs_env import configurar_ambiente_tqs_64
 
+
+def _cor_crua(dwg_origem: Any, pos: int) -> int:
+    """
+    Cor gravada no elemento (-1 = cor do nível). O ``iterator.color`` devolve a cor já
+    resolvida pelo nível; regravá-la transformaria a cor do nível em cor fixa na cópia.
+    """
+    try:
+        return dwg_origem.edit._Edit__LerAtribElem(pos)[0]
+    except Exception:
+        return -1
+
+
 class CAGeometryBuilder:
     """
     Construtor e montador executivo de pranchas de Geometria de Concreto Armado (TQS CA).
@@ -92,7 +104,9 @@ class CAGeometryBuilder:
             it.Begin()
 
             while True:
-                if it.GetElementReadPosition():
+                pos_src = it.GetElementReadPosition()
+                if pos_src:
+                    cor = _cor_crua(dwg_src, pos_src)  # pos só vale dentro deste Open
                     lvl = it.level
                     name = it.elementName
                     x = it.x1
@@ -102,18 +116,18 @@ class CAGeometryBuilder:
                     # Moldura 180-70 (Nível 100)
                     if lvl == 100:
                         if name == "Linha":
-                            moldura_elems.append(("Linha", it.color, it.style, it.x1, it.y1, it.x2, it.y2))
+                            moldura_elems.append(("Linha", cor, it.style, it.x1, it.y1, it.x2, it.y2))
                         elif name == "Texto":
-                            moldura_elems.append(("Texto", it.color, it.style, it.x1, it.y1, it.textHeight, it.textAngle, it.text))
+                            moldura_elems.append(("Texto", cor, it.style, it.x1, it.y1, it.textHeight, it.textAngle, it.text))
 
                     # Título Executivo
                     elif lvl in [222, 250] and x <= 11000 and y >= -2300:
                         if name == "Texto":
-                            title_elems.append(("Texto", lvl, it.color, it.style, it.x1, it.y1, it.textHeight, it.textAngle, it.text))
+                            title_elems.append(("Texto", lvl, cor, it.style, it.x1, it.y1, it.textHeight, it.textAngle, it.text))
 
                     # Notas Técnicas e Legendas (X >= 16200 e Y >= -2350)
                     elif x >= 16200 and y >= -2350 and lvl != 100 and not is_zero:
-                        item = {"name": name, "level": lvl, "color": it.color, "style": it.style}
+                        item = {"name": name, "level": lvl, "color": cor, "style": it.style}
                         if name == "Linha":
                             item["coords"] = (it.x1, it.y1, it.x2, it.y2)
                             notes_elems.append(item)

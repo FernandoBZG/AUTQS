@@ -27,8 +27,10 @@ DESCRICAO_PADRAO = "MODIFICAÇÕES GERAIS"
 DESCRICAO_SEM_ALTERACAO = "REEMISSÃO SEM ALTERAÇÕES NO DESENHO"
 MAX_CARACTERES = 60
 
-# Áreas da folha (cm de papel) que mudam a cada emissão e não entram na comparação
-SELO_X_MIN, SELO_Y_MAX = 100.3, 29.8
+# Áreas da folha (cm de papel) que mudam a cada emissão e não entram na comparação.
+# O selo fica no canto inferior direito com tamanho fixo no papel: a área é medida a partir
+# da borda direita, para valer em qualquer formato (na A0 de 118,9 cm equivale a x > 100,3).
+SELO_LARGURA, SELO_ALTURA = 18.6, 29.8
 MARGEM_ESQ, MARGEM_INF, MARGEM_DIR, MARGEM_SUP = 2.6, 1.05, 1.0, 1.05
 COMPRIMENTO_MINIMO = 0.05        # microtraços (cm de papel)
 TOLERANCIA_SEGMENTO = 0.03       # 2ª passada de casamento (cm de papel)
@@ -97,7 +99,7 @@ def _norm_texto(texto: str) -> str:
 
 
 def _excluido(x: float, y: float, largura: float = 118.9, altura: float = 45.0) -> bool:
-    if x > SELO_X_MIN and y < SELO_Y_MAX:
+    if x > largura - SELO_LARGURA and y < SELO_ALTURA:
         return True
     return x < MARGEM_ESQ or y < MARGEM_INF or x > largura - MARGEM_DIR or y > altura - MARGEM_SUP
 

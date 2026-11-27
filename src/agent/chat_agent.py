@@ -5,6 +5,14 @@ from src.agent.orchestrator import AutqsAgentOrchestrator
 from src.tqs_adapter.building_reader import TQSBuildingReader
 from src.agent.gemini_client import GeminiClient
 
+def _fz_minimo(p: Dict[str, Any]) -> Optional[float]:
+    """Menor Fz conhecido do pilar (FZ MIN do PORLID, senão FZ MAX); None se o pilar não tem reação."""
+    if p.get("sem_reacao"):
+        return None
+    valores = [v for v in (p.get("nk_min_tf"), p.get("nk_max_tf")) if v is not None]
+    return min(valores) if valores else None
+
+
 class AutqsChatAgent:
     """
     Agente de Conversação Inteligente para Engenharia Estrutural e TQS V25.
@@ -766,7 +774,7 @@ class AutqsChatAgent:
                         copia_tqs = os.path.join(caminho_ed, "ESPACIAL", os.path.basename(dwg_local))
 
                     # Verifica se há pilares tracionados
-                    tracionados = [p for p in pilares if p.get("nk_max_tf", 0.0) < 0]
+                    tracionados = [p for p in pilares if (_fz_minimo(p) or 0.0) < 0]
 
                     dados_porlid = res.get("dados_porlid")
                     porlid_info = ""
@@ -808,7 +816,7 @@ class AutqsChatAgent:
                         resposta_texto += (
                             f"> [!WARNING]\n"
                             f"> **Atenção Estrutural:** Foram detectados **{len(tracionados)} pilar(es) com esforço de tração** "
-                            f"(ex: `{tracionados[0]['pilar']}` com Nk = `{tracionados[0]['nk_max_tf']:.1f} tf`). "
+                            f"(ex: `{tracionados[0]['pilar']}` com Fz = `{_fz_minimo(tracionados[0]):.1f} tf`). "
                             f"Verifique a ancoragem das estacas/sapatas contra arrancamento.\n\n"
                         )
 
@@ -872,13 +880,13 @@ class AutqsChatAgent:
 
             if self.ultima_planta:
                 pilares = self.ultima_planta.get("pilares", [])
-                tracionados = [p for p in pilares if p.get("nk_max_tf", 0.0) < 0]
+                tracionados = [p for p in pilares if (_fz_minimo(p) or 0.0) < 0]
                 if tracionados:
                     linhas = [f"### ⚠️ Pilares com Esforço de Tração na Fundação:\n"]
                     linhas.append("| Pilar | Seção (cm) | Nk (tf) | Xcg (m) | Ycg (m) |")
                     linhas.append("| :--- | :---: | :---: | :---: | :---: |")
                     for p in tracionados:
-                        linhas.append(f"| **{p['pilar']}** | {p['secao_cm']} | **{p['nk_max_tf']:.2f}** | {p['xcg_m']:.2f} | {p['ycg_m']:.2f} |")
+                        linhas.append(f"| **{p['pilar']}** | {p['secao_cm']} | **{_fz_minimo(p):.2f}** | {p['xcg_m']:.2f} | {p['ycg_m']:.2f} |")
                     linhas.append("\n> [!CAUTION]\n> Pilares com tração requerem elementos de fundação projetados para resistir ao arrancamento.")
                     return {"tipo": "analise_pilares", "texto": "\n".join(linhas), "dados": tracionados}
                 else:
