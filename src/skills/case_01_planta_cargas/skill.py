@@ -80,6 +80,13 @@ class PlantaDeCargasSkill(BaseSkill):
         caminho_backup_gerado = None
         if gerar_desenho and len(pilares_processados) > 0:
             caminho_alvo = caminho_saida_desenho or "GABARITO.DWG"
+            if not os.path.isabs(caminho_alvo):
+                # Caminho relativo ia parar na pasta onde o AUTQS roda (e o TQS deixava .BAK lá).
+                # Gera numa pasta de trabalho temporária; a cópia final vai para ESPACIAL abaixo.
+                import tempfile
+                pasta_trabalho = os.path.join(tempfile.gettempdir(), "AUTQS_planta_cargas")
+                os.makedirs(pasta_trabalho, exist_ok=True)
+                caminho_alvo = os.path.join(pasta_trabalho, caminho_alvo)
             escala_req = kwargs.get("escala")
 
             if caminho_alvo.lower().endswith(".dwg"):

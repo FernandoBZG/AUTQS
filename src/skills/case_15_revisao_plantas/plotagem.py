@@ -143,7 +143,9 @@ def verificar_pdf(pdf: str, pl: PlantaCPL, regras: RegrasNomenclatura, numero: i
     try:
         dados = _textos_pdf(pdf)
     except ImportError:
-        return [{"item": "Leitura do PDF", "ok": True, "detalhe": "PyMuPDF não instalado; conteúdo não conferido"}]
+        # Sem PyMuPDF não há como conferir o PDF: falha a checagem (gravar exige forcar=True)
+        return [{"item": "Leitura do PDF", "ok": False,
+                 "detalhe": "PyMuPDF não instalado (pip install PyMuPDF); conteúdo do PDF não conferido"}]
     pagina, spans = dados[0]["pagina_cm"], dados[1:]
     textos = [s["texto"] for s in spans]
     normal = {_norm(t) for t in textos}

@@ -2,8 +2,10 @@
 name: consistencia-planta
 description: >-
   Audita a consistência da Planta de Formas no TQS V25 antes do processamento estrutural.
-  Detecta vigas sem apoio, lajes sem bordas fechadas, nós desconectados, desníveis incoerentes
-  e inconsistências geométricas que impediriam a convergência do pórtico espacial ou grelha de lajes.
+  Interpreta os avisos e erros que o próprio TQS grava (MENAVI.LST e listagens do pavimento):
+  vigas sem apoio, apoios nulos, eixos fora do pilar, interferências, balanços e avisos normativos.
+  Por padrão só lê as listagens existentes; reprocessar no TQS (PROC FORMAS 2 1) exige
+  executar_tqs=True e aprovação explícita do usuário.
   Use quando o usuário pedir para verificar consistência da planta, auditar formas, checar apoios de vigas ou validar o modelo.
 ---
 
@@ -29,7 +31,8 @@ from src.skills.case_05_consistencia_planta.skill import ConsistenciaPlantaSkill
 skill = ConsistenciaPlantaSkill()
 resultado = skill.executar(
     edificio_nome="054",
-    pavimento="terreo",
+    pavimento="terreo",   # filtro sem correspondência devolve erro com a lista de pavimentos
+    executar_tqs=False,    # True reprocessa no TQS: só com aprovação do usuário
     formato="resumo"
 )
 ```

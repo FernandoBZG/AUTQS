@@ -68,18 +68,18 @@ class FormasAlvenariaSkill(BaseSkill):
         # Resolve pavimento flexivelmente se pasta direta não existir
         pasta_pav = os.path.join(caminho_ed, pavimento)
         if not os.path.exists(pasta_pav):
-            import re
-            pav_digits = re.findall(r"\d+", pavimento)
-            for item in os.listdir(caminho_ed):
-                p_cand = os.path.join(caminho_ed, item)
-                if os.path.isdir(p_cand):
-                    item_digits = re.findall(r"\d+", item)
-                    if pav_digits and item_digits and pav_digits[0] == item_digits[0]:
-                        pavimento = item
-                        break
-                    elif pavimento.lower() in item.lower():
-                        pavimento = item
-                        break
+            from src.tqs_adapter.pavimentos import (
+                filtrar_pavimentos, listar_pastas_pavimento, mensagem_pavimento_nao_encontrado,
+            )
+            todos = listar_pastas_pavimento(caminho_ed)
+            candidatos = filtrar_pavimentos(todos, pavimento)
+            if len(candidatos) != 1:
+                msg = mensagem_pavimento_nao_encontrado(pavimento, todos)
+                if candidatos:
+                    msg = (f"Pavimento '{pavimento}' é ambíguo: {', '.join(n for n, _ in candidatos)}. "
+                           "Informe o nome completo da pasta.")
+                return {"status": "erro", "sucesso": False, "edificio": edificio_nome, "erro": msg}
+            pavimento = candidatos[0][0]
 
         builder = AlvenariaDwgBuilder()
         try:

@@ -1,10 +1,12 @@
 ---
 name: otimizacao-pilares
 description: >-
-  Audita e dimensiona os pilares do edifício conforme a NBR 6118:2023 no TQS V25.
+  Audita os pilares já dimensionados pelo TQS V25 (SELEC/LISPIL/CARPIL/INICIA) conforme a NBR 6118:2023;
+  não redimensiona: só diagnostica e sugere seções.
   Analisa esforços axiais máximos (Nk), momentos fletores (Mx, My), calcula esbeltez (λ),
   avalia armadura longitudinal necessária e taxa de aço (As/Ac), e recomenda ajustes de seção
-  quando a taxa de armadura ultrapassa os limites econômicos ou normativos (ρ > 3.5% ou λ > 90).
+  quando a taxa de armadura ultrapassa os limites econômicos ou normativos (hiper-armado: ρ ≥ 2,5%; esbelto: λ > 90; superdimensionado: ρ ≤ 0,7% e ν ≤ 0,28).
+  Volume de concreto e peso de aço usam o pé-direito real de cada lance (PD do PILAR/INICIA.LST).
   Use quando o usuário pedir para analisar pilares, dimensionar pilares, otimizar seções de pilares ou verificar taxas de armadura.
 ---
 
@@ -16,7 +18,7 @@ Esta habilidade audita a segurança e a economia dos pilares da estrutura contra
 
 ## 🎯 Quando Utilizar Esta Skill
 
-1. **Auditoria de Esbeltez e Taxa de Aço**: Identificar pilares hiper-solicitados ou com armadura acima de 3.5%.
+1. **Auditoria de Esbeltez e Taxa de Aço**: Identificar pilares hiper-solicitados ou com taxa de armadura ρ ≥ 2,5% (critério econômico do AUTQS; o limite da NBR é 4% fora da emenda).
 2. **Recomendação de Redimensionamento**: Sugerir aumento de seção $(\Delta b, \Delta h)$ para baratear o consumo de aço.
 3. **Restrição de Largura Fixa**: Avaliar expansões apenas no comprimento $h$ quando a arquitetura não permite aumentar a largura $b$.
 

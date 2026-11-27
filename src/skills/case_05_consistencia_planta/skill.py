@@ -5,6 +5,7 @@ from src.skills.case_05_consistencia_planta.consistency_analyzer import (
     TQSConsistencyAnalyzer,
     ConsistenciaPavimentoResultado,
 )
+from src.tqs_adapter.pavimentos import mensagem_pavimento_nao_encontrado
 
 class ConsistenciaPlantaSkill(BaseSkill):
     """
@@ -68,7 +69,9 @@ class ConsistenciaPlantaSkill(BaseSkill):
                 "status": "erro",
                 "sucesso": False,
                 "edificio": edificio_nome,
-                "erro": f"Nenhum pavimento estrutural encontrado para '{pavimento or 'todos'}' no edifício '{edificio_nome}'."
+                "erro": mensagem_pavimento_nao_encontrado(
+                    pavimento or "todos", analyzer.listar_pavimentos_disponiveis()
+                ),
             }
 
         # Status consolidado do edifício / pavimentos

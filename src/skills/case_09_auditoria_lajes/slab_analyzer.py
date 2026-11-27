@@ -3,6 +3,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Dict, Any, List, Optional
 from src.tqs_adapter.building_reader import TQSBuildingReader
+from src.tqs_adapter.pavimentos import filtrar_pavimentos, listar_pastas_pavimento
 
 
 @dataclass
@@ -150,25 +151,9 @@ class TQSSlabAnalyzer:
             caminho_edificio=self.caminho_edificio
         )
 
-        subdirs = [d for d in os.listdir(self.caminho_edificio) if os.path.isdir(os.path.join(self.caminho_edificio, d))]
+        pastas = filtrar_pavimentos(listar_pastas_pavimento(self.caminho_edificio), pavimento_filtro)
 
-        for d in sorted(subdirs):
-            # Ignora pastas de sistema
-            if d.upper() in ["ESPACIAL", "GERAIS", "INFRA", "FUNDAC", "FUNDAÇÃO", "PILAR", "MOLDURAS", "SELOS", "ALVEST", "ARQ MODELO", "TQSDESKTOPB"]:
-                continue
-
-            if pavimento_filtro:
-                f_clean = re.sub(r"^(?:no|do|piso|pavimento)\s+", "", pavimento_filtro.strip(), flags=re.IGNORECASE).strip()
-                digitos = re.findall(r"\d+", f_clean)
-                if digitos:
-                    match_p = any(dg in d for dg in digitos)
-                else:
-                    toks = [t for t in re.split(r"[\s_\^\-]+", f_clean.lower()) if len(t) > 2]
-                    match_p = any(tk in d.lower() for tk in toks) if toks else (f_clean.lower() in d.lower())
-                if not match_p:
-                    continue
-
-            caminho_pav = os.path.join(self.caminho_edificio, d)
+        for d, caminho_pav in pastas:
             pav_res = self._analisar_pavimento(d, caminho_pav)
             if pav_res and pav_res.total_lajes > 0:
                 resultado.pavimentos[d] = pav_res

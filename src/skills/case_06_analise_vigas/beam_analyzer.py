@@ -6,12 +6,10 @@ from dataclasses import dataclass, field, asdict
 from typing import Dict, Any, List, Optional, Tuple
 
 from src.tqs_adapter.building_reader import TQSBuildingReader
+from src.tqs_adapter.pavimentos import filtrar_pavimentos, listar_pastas_pavimento, remover_acentos
 
 
-def _remover_acentos(texto: str) -> str:
-    """Remove acentos e converte para minúsculas para comparações flexíveis."""
-    nfkd = unicodedata.normalize("NFKD", texto)
-    return "".join(c for c in nfkd if not unicodedata.combining(c)).lower()
+_remover_acentos = remover_acentos  # compatibilidade com usos internos
 
 
 @dataclass
@@ -278,16 +276,7 @@ class TQSBeamAnalyzer:
         Retorna lista de (nome_pavimento, caminho_pasta_vigas).
         """
         pastas = []
-        ignorar = ["ESPACIAL", "PILAR", "FUNDAC", "GERAIS", "SISE", "ARQ MODELO", "SELOS", "Alvest", "INFRA", "PREMOLD"]
-
-        if not os.path.exists(self.caminho_edificio):
-            return []
-
-        for item in sorted(os.listdir(self.caminho_edificio)):
-            p = os.path.join(self.caminho_edificio, item)
-            if not os.path.isdir(p) or item in ignorar or "_BKP_" in item:
-                continue
-
+        for item, p in listar_pastas_pavimento(self.caminho_edificio):
             pasta_vigas = os.path.join(p, "VIGAS")
             if os.path.isdir(pasta_vigas):
                 tem_lst = (
@@ -301,27 +290,8 @@ class TQSBeamAnalyzer:
         return pastas
 
     def localizar_pasta_vigas(self, filtro_pavimento: Optional[str] = None) -> List[Tuple[str, str]]:
-        """Filtra pastas de vigas correspondentes ao pavimento solicitado."""
-        todos = self.listar_pastas_vigas()
-        if not filtro_pavimento or filtro_pavimento.lower() in ["todos", "all", "*"]:
-            return todos
-
-        filtro_norm = _remover_acentos(filtro_pavimento)
-        correspondencias = []
-        for nome, caminho in todos:
-            nome_norm = _remover_acentos(nome)
-            if filtro_norm in nome_norm or nome_norm in filtro_norm:
-                correspondencias.append((nome, caminho))
-
-        if not correspondencias:
-            for nome, caminho in todos:
-                nome_norm = _remover_acentos(nome)
-                if "terreo" in filtro_norm and "terreo" in nome_norm:
-                    correspondencias.append((nome, caminho))
-                elif any(num in filtro_norm for num in ["2", "3", "4", "5", "tipo"]) and any(num in nome_norm for num in ["2", "3", "4", "5", "tipo"]):
-                    correspondencias.append((nome, caminho))
-
-        return correspondencias if correspondencias else todos
+        """Pastas de vigas do pavimento solicitado; sem correspondência devolve lista vazia."""
+        return filtrar_pavimentos(self.listar_pastas_vigas(), filtro_pavimento)
 
     def analisar_pavimento(
         self,
