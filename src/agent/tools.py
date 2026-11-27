@@ -12,6 +12,7 @@ from src.skills.case_10_quantitativo_materiais.skill import QuantitativoMateriai
 from src.skills.case_11_memorial_calculo.skill import MemorialCalculoSkill
 from src.skills.case_12_limpeza_arquitetura.skill import LimpezaArquiteturaSkill
 from src.skills.case_13_geometria_ca.skill import GeometriaCASkill
+from src.skills.case_15_revisao_plantas.skill import RevisaoPlantasSkill
 from src.tqs_adapter.model_editor import TQSModelEditor
 
 class ToolsRegistry:
@@ -36,6 +37,7 @@ class ToolsRegistry:
         self.registrar_skill(MemorialCalculoSkill())
         self.registrar_skill(LimpezaArquiteturaSkill())
         self.registrar_skill(GeometriaCASkill())
+        self.registrar_skill(RevisaoPlantasSkill())
 
     def registrar_skill(self, skill):
         self._skills[skill.nome] = skill
@@ -374,6 +376,56 @@ class ToolsRegistry:
                             }
                         },
                         "required": ["edificio_nome", "pavimento"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "emitir_revisao_planta",
+                    "description": self._skills["emitir_revisao_planta"].descricao,
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "edificio_nome": {
+                                "type": "string",
+                                "description": "Nome ou código do edifício TQS (ex: '054 AE')."
+                            },
+                            "acao": {
+                                "type": "string",
+                                "enum": ["listar", "emitir", "preencher", "plotar", "conferir"],
+                                "description": "'listar' pranchas e status, 'emitir' a próxima revisão, 'preencher' o carimbo (_CR.DWG), 'plotar' o PDF e o DXF da revisão atual com o motor do TQS (prévia + aprovação para gravar em PLANTAS) ou 'conferir' a plotagem."
+                            },
+                            "prancha": {
+                                "type": "string",
+                                "description": "Prancha: nº (ex: '0601'), ID completo (054-EST-PB-0601-TP-1FIA) ou parte do título/desenho."
+                            },
+                            "descricao": {
+                                "type": "string",
+                                "description": "Descrição da revisão; se omitida, é sugerida a partir do que mudou desde a última plotagem."
+                            },
+                            "autor": {
+                                "type": "string",
+                                "description": "Autor da revisão (padrão: o último autor do histórico da prancha)."
+                            },
+                            "data": {
+                                "type": "string",
+                                "description": "Data dd/mm/aaaa (padrão: hoje)."
+                            },
+                            "fase": {
+                                "type": "string",
+                                "description": "Código da nova fase (ex: 'PE') para abrir a prancha da fase seguinte em R00."
+                            },
+                            "simular": {
+                                "type": "boolean",
+                                "description": "Gera o .CPL numa pasta temporária e mostra o diff, sem gravar no TQS."
+                            },
+                            "aprovado": {
+                                "type": "boolean",
+                                "description": "Somente após aprovação explícita do usuário: grava a revisão no .CPL."
+                            }
+                        },
+                        "required": ["edificio_nome", "acao"]
                     }
                 }
             },

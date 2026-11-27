@@ -35,6 +35,7 @@ class TestNovasSkillsIntegracao(unittest.TestCase):
             "extrair_quantitativo_materiais",
             "gerar_memorial_descritivo",
             "padronizar_arquitetura_tqs",
+            "emitir_revisao_planta",
         ]
         for esp in esperadas:
             self.assertIn(esp, nomes, f"Ferramenta {esp} não encontrada no catálogo de Function Calling.")

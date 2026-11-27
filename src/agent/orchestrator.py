@@ -68,6 +68,19 @@ class AutqsAgentOrchestrator:
         if not params.get("edificio_nome"):
             params["edificio_nome"] = "054"
 
+        # 2.5. Revisões de pranchas do Editor de Plantas (Case 15). Fica antes das rotas de
+        # listagem de pavimentos ("PLANTA" + "LIST") e de comparação ("REVISA"), que também reagiriam.
+        from src.skills.case_15_revisao_plantas.comandos import eh_pedido_revisao, extrair_parametros_revisao
+        if eh_pedido_revisao(comando):
+            p_rev = extrair_parametros_revisao(comando)
+            if "edificio_nome" not in p_rev:
+                ed = params.get("edificio_nome", "054")
+                p_rev["edificio_nome"] = "054" if ed == p_rev.get("prancha") else ed
+            for chave, valor in params.items():
+                p_rev.setdefault(chave, valor)
+            p_rev.pop("aprovado", None)  # gravar no .CPL só pelo fluxo de aprovação
+            return self.registry.executar_ferramenta("emitir_revisao_planta", p_rev)
+
         # 3. Processamento Estrutural do Edifício (Pórtico Espacial ou Global)
         # Ex: "processe o edifício 051", "calcular pórtico espacial", "rodar processamento global"
         if not any(k in cmd_norm for k in ["MEMORIAL", "RELATORI", "JUSTIFICATIV"]) and any(k in cmd_norm for k in ["PROCESS", "CALCUL", "ROD", "EXECUT", "PORTIC", "RECALCUL"]) and any(k in cmd_norm for k in ["EDIFIC", "OBRA", "PROJET", "PORTIC", "ESTRUTUR", "MODEL"]):

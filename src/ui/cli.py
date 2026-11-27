@@ -110,6 +110,29 @@ def solicitar_aprovacao_modificacao(
         print("\n[CANCELADO] Operação interrompida. Nenhuma modificação foi aplicada ao modelo.\n")
         return False
 
+def solicitar_aprovacao_generica(titulo: str, detalhes: str, pergunta: str, auto_aprovar: bool = False) -> bool:
+    """
+    Pede aprovação explícita para gravações fora do modelo estrutural (ex.: revisão no .CPL
+    de uma prancha). Respeita --sim / -y. Retorna True se aprovado.
+    """
+    print("\n" + "=" * 75)
+    print(f"   SOLICITAÇÃO DE APROVAÇÃO: {titulo.upper()}")
+    print("=" * 75)
+    print(detalhes)
+    if auto_aprovar:
+        print("\n[AUTO-APROVADO] Confirmação concedida via flag (--sim / -y).")
+        return True
+    try:
+        resp = input(f"\n{pergunta} [s/N]: ").strip().lower()
+    except (KeyboardInterrupt, EOFError):
+        print("\n[CANCELADO] Operação interrompida. Nada foi gravado.\n")
+        return False
+    if resp in ["s", "sim", "y", "yes"]:
+        print("[APROVADO] Gravando...\n")
+        return True
+    print("\n[CANCELADO] Nada foi gravado.\n")
+    return False
+
 def main():
     parser = argparse.ArgumentParser(description="AUTQS CLI - Plataforma de IA e Automação para TQS V25")
     parser.add_argument("--edificio", type=str, default=None, help="Nome ou código do edifício TQS (ex: '054' ou nome completo)")
@@ -122,6 +145,20 @@ def main():
     parser.add_argument("--formas-alvenaria", action="store_true", help="Gera a Planta de Formas de Alvenaria Estrutural (1ª Fiada) executiva")
     parser.add_argument("--geometria-ca", "--geo-ca", action="store_true", help="Gera a prancha executiva de Geometria/Formas de Concreto Armado (GEO_<PAVIMENTO>.DWG)")
     parser.add_argument("--tools", action="store_true", help="Lista as ferramentas disponíveis para o Agente de IA")
+
+    # Revisões de pranchas do Editor de Plantas (Case 15)
+    parser.add_argument("--revisoes", action="store_true", help="Lista as pranchas do Editor de Plantas com revisão atual e status")
+    parser.add_argument("--emitir-revisao", action="store_true", help="Registra a próxima revisão no .CPL da prancha (com prévia e aprovação)")
+    parser.add_argument("--conferir-revisao", action="store_true", help="Confere a plotagem (-Rnn.PDF/.TXT) da última revisão da prancha")
+    parser.add_argument("--plotar-revisao", action="store_true", help="Plota o PDF e o DXF da revisão atual da prancha com o motor de plotagem do TQS (prévia + aprovação para gravar em PLANTAS)")
+    parser.add_argument("--preencher-carimbo", action="store_true", help="Gera o carimbo preenchido da prancha (<ID>_CR.DWG), como o 'Preencher' do Editor de Plantas")
+    parser.add_argument("--prancha", type=str, default=None, help="Prancha: nº (ex: '0601'), ID completo ou parte do título")
+    parser.add_argument("--descricao", type=str, default=None, help="Descrição da revisão (padrão: sugerida pelo que mudou desde a última plotagem)")
+    parser.add_argument("--autor", type=str, default=None, help="Autor da revisão (padrão: último autor da prancha)")
+    parser.add_argument("--data", type=str, default=None, help="Data da revisão dd/mm/aaaa (padrão: hoje)")
+    parser.add_argument("--fase", type=str, default=None, help="Código da nova fase (ex: PE): cria a prancha da nova fase em R00")
+    parser.add_argument("--simular", action="store_true", help="Na emissão de revisão, gera o .CPL numa pasta temporária sem gravar no TQS")
+    parser.add_argument("--forcar", action="store_true", help="Emite mesmo que a revisão atual ainda não tenha sido plotada")
 
     # Opções do Modelador Estrutural
     parser.add_argument("--pavimentos", action="store_true", help="Lista todos os pavimentos do modelo estrutural")
@@ -344,6 +381,53 @@ def main():
             print(f"\nAbra o desenho diretamente no TQS (Menu Arquivo > Abrir Desenho) para visualização e plotagem.")
         else:
             print(f"[ERRO] Falha ao gerar formas: {res.get('erro')}")
+        return
+
+    # Revisões de pranchas do Editor de Plantas (Case 15)
+    if args.revisoes or args.emitir_revisao or args.conferir_revisao or args.preencher_carimbo or args.plotar_revisao:
+        acao = ("emitir" if args.emitir_revisao else "conferir" if args.conferir_revisao
+                else "preencher" if args.preencher_carimbo else "plotar" if args.plotar_revisao else "listar")
+        params = {"edificio_nome": args.edificio or "054", "acao": acao}
+        for chave in ("prancha", "descricao", "autor", "data", "fase"):
+            valor = getattr(args, chave)
+            if valor:
+                params[chave] = valor
+        if args.simular:
+            params["simular"] = True
+        if args.forcar:
+            params["forcar"] = True
+        res = orchestrator.registry.executar_ferramenta("emitir_revisao_planta", params)
+        if args.json:
+            print(json.dumps(res, indent=2, ensure_ascii=False, default=str))
+            return
+        print(res.get("resumo_executivo") or res.get("erro", ""))
+        if res.get("status") in ("aguardando_aprovacao", "simulado") and res.get("diff_cpl"):
+            print("\nAlteração no .CPL:\n" + res["diff_cpl"])
+        if res.get("status") == "aguardando_aprovacao":
+            rev = res.get("revisao") if isinstance(res.get("revisao"), dict) else None
+            if res.get("acao") == "plotar":
+                titulo, detalhe, pergunta = (
+                    "plotagem da prancha",
+                    f"Prancha {res['prancha']} — {res['revisao']} | PDF gerado em {res['pdf_gerado']}",
+                    "Gravar o PDF, o DXF e o carimbo preenchido em PLANTAS?")
+                rev = None
+            elif rev:
+                titulo, detalhe, pergunta = (
+                    "revisão de prancha",
+                    f"Prancha {res['prancha_destino']} — {rev['rotulo']} | {rev['data']} | {rev['autor']} | {rev['descricao']}",
+                    "Gravar esta revisão no .CPL da prancha?")
+            else:
+                titulo, detalhe, pergunta = (
+                    "carimbo da prancha",
+                    f"Prancha {res['prancha']} — {len(res.get('mudancas', []))} variável(is) mudam em {res['caminho_carimbo']}",
+                    "Gravar o carimbo preenchido (_CR.DWG)?")
+            aprovado = solicitar_aprovacao_generica(titulo, detalhe, pergunta, auto_aprovar=args.sim)
+            if aprovado:
+                params["aprovado"] = True
+                if rev:
+                    params.update(descricao=rev["descricao"], autor=rev["autor"], data=rev["data"])
+                res = orchestrator.registry.executar_ferramenta("emitir_revisao_planta", params)
+                print(res.get("resumo_executivo") or res.get("erro", ""))
         return
 
     # Verificação e Auditoria de Consistência de Formas no TQS
