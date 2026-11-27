@@ -64,6 +64,12 @@ class AutqsChatAgent:
                 pend = self.modificacao_pendente
                 self.modificacao_pendente = None
                 res_mut = self.orchestrator.registry.executar_ferramenta(pend["funcao"], pend["parametros"])
+                if pend.get("tipo") == "revisao_planta":
+                    return {
+                        "tipo": "texto" if res_mut.get("status") == "sucesso" else "erro",
+                        "texto": res_mut.get("resumo_executivo") or res_mut.get("erro", "Falha ao gravar a revisão."),
+                        "dados": res_mut,
+                    }
                 if res_mut.get("status") == "sucesso":
                     elem_tipo = res_mut.get("elemento", "").capitalize()
                     nome_elem = res_mut.get("nome", "")
@@ -115,13 +121,45 @@ class AutqsChatAgent:
                         "texto": f"❌ **Erro na alteração do modelo:** {res_mut.get('mensagem', 'Operação não concluída.')}"
                     }
             elif eh_negacao:
+                pend = self.modificacao_pendente
                 self.modificacao_pendente = None
+                if pend.get("tipo") == "revisao_planta":
+                    return {
+                        "tipo": "texto",
+                        "texto": "🚫 **Operação cancelada pelo usuário.**\n\nNada foi gravado: os arquivos da prancha permanecem inalterados."
+                    }
                 return {
                     "tipo": "texto",
                     "texto": "🚫 **Modificação cancelada pelo usuário.**\n\nNenhuma alteração foi gravada. O modelo estrutural permanece inalterado."
                 }
             else:
                 self.modificacao_pendente = None
+
+        # 1.5. Revisões de pranchas do Editor de Plantas (Case 15). Fica antes das rotas genéricas
+        # ("listar ... projeto", "comparar/revisar planta"), que também reagiriam a esses pedidos.
+        from src.skills.case_15_revisao_plantas.comandos import eh_pedido_revisao, extrair_parametros_revisao
+        if eh_pedido_revisao(msg):
+            params_rev = extrair_parametros_revisao(msg, self.edificio_ativo or "054")
+            params_rev.pop("aprovado", None)
+            res_rev = self.orchestrator.registry.executar_ferramenta("emitir_revisao_planta", params_rev)
+            if res_rev.get("status") == "aguardando_aprovacao":
+                aprovados = dict(params_rev, aprovado=True)
+                rev = res_rev.get("revisao") if isinstance(res_rev.get("revisao"), dict) else None
+                if rev:  # grava exatamente o texto mostrado na prévia
+                    aprovados.update(descricao=rev["descricao"], autor=rev["autor"], data=rev["data"])
+                aprovados.pop("simular", None)
+                self.modificacao_pendente = {"tipo": "revisao_planta", "funcao": "emitir_revisao_planta", "parametros": aprovados}
+                alvo = ("a revisão no .CPL" if rev else "o PDF em PLANTAS" if res_rev.get("acao") == "plotar"
+                        else "o carimbo (_CR.DWG)")
+                texto = (res_rev["resumo_executivo"]
+                         + f"\n\n> [!WARNING]\n> {alvo[0].upper() + alvo[1:]} da prancha só é gravado depois da sua aprovação."
+                         + f"\n\nDeseja gravar {alvo}?\n👉 Responda **sim** para gravar ou **não** para cancelar.")
+                return {"tipo": "solicitacao_aprovacao", "texto": texto, "dados": res_rev}
+            return {
+                "tipo": "texto" if res_rev.get("sucesso") else "erro",
+                "texto": res_rev.get("resumo_executivo") or res_rev.get("erro", ""),
+                "dados": res_rev,
+            }
 
         # 2. Pergunta sobre edifícios disponíveis
         if any(k in msg_norm for k in ["QUAI", "LIST", "MOSTR", "EXIB"]) and any(k in msg_norm for k in ["EDIF", "PROJET", "OBRA"]) and not any(k in msg_norm for k in ["PAVIMENT", "PISO", "VIGA", "LAJE", "PILAR", "CARGA"]):
