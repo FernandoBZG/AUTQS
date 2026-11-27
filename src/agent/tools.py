@@ -394,7 +394,7 @@ class ToolsRegistry:
                             "acao": {
                                 "type": "string",
                                 "enum": ["listar", "emitir", "preencher", "plotar", "conferir"],
-                                "description": "'listar' pranchas e status, 'emitir' a próxima revisão, 'preencher' o carimbo (_CR.DWG), 'plotar' o PDF da revisão atual com o motor do TQS (prévia + aprovação para gravar em PLANTAS) ou 'conferir' a plotagem."
+                                "description": "'listar' pranchas e status, 'emitir' a próxima revisão, 'preencher' o carimbo (_CR.DWG), 'plotar' o PDF e o DXF da revisão atual com o motor do TQS (prévia + aprovação para gravar em PLANTAS) ou 'conferir' a plotagem."
                             },
                             "prancha": {
                                 "type": "string",

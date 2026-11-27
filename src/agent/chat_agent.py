@@ -149,7 +149,7 @@ class AutqsChatAgent:
                     aprovados.update(descricao=rev["descricao"], autor=rev["autor"], data=rev["data"])
                 aprovados.pop("simular", None)
                 self.modificacao_pendente = {"tipo": "revisao_planta", "funcao": "emitir_revisao_planta", "parametros": aprovados}
-                alvo = ("a revisão no .CPL" if rev else "o PDF em PLANTAS" if res_rev.get("acao") == "plotar"
+                alvo = ("a revisão no .CPL" if rev else "o PDF/DXF em PLANTAS" if res_rev.get("acao") == "plotar"
                         else "o carimbo (_CR.DWG)")
                 texto = (res_rev["resumo_executivo"]
                          + f"\n\n> [!WARNING]\n> {alvo[0].upper() + alvo[1:]} da prancha só é gravado depois da sua aprovação."

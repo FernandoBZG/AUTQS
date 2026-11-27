@@ -4,7 +4,8 @@ Plotagem em PDF de uma prancha do Editor de Plantas sem abrir o TQS.
 O Editor de Plantas (e o TQSDwg.file.SaveAs(".PDF")) plota com o NCVRPLD.EXE, o motor
 de plotagem do TQS: ele roda na pasta de trabalho e lê nela o SELDWG.TMP (lista de
 plantas a plotar) e o NCVRPLD.TMP; ao terminar, grava "OK" no EXTDWG.TMP e o PDF
-<ID>-Rnn.PDF ao lado do .CPL. O motor não preenche as variáveis da moldura: o carimbo
+<ID>-Rnn.PDF ao lado do .CPL. O NCVRPLD.TMP escolhe o formato (FORMATOS_MOTOR): o motor
+roda uma vez por formato (PDF e DXF por padrão, como o Editor de Plantas grava). O motor não preenche as variáveis da moldura: o carimbo
 <ID>_CR.DWG precisa estar preenchido antes (o botão "Preencher" do editor), o que aqui é
 feito por carimbo.preencher_carimbo.
 
@@ -30,6 +31,9 @@ from src.skills.case_15_revisao_plantas.nomenclatura import RegrasNomenclatura
 EXECUTAVEL_MOTOR = "NCVRPLD.EXE"
 ARQUIVOS_CONFIG_EDIFICIO = ("PLANTAS.DAT", "NMCARQ.DAT")
 TIMEOUT_PADRAO_S = 600
+# NCVRPLD.TMP: 1ª linha 0 = DXF, 1 = dispositivo; 2ª linha (dispositivo) 0 = PLT/PLW, 1 = PDF, 2 = DWF, 3 = SVG.
+FORMATOS_MOTOR = {"PDF": "1\n1\n", "DXF": "0\n1\n", "PLW": "1\n0\n", "DWF": "1\n2\n", "SVG": "1\n3\n"}
+FORMATOS_PADRAO = ("PDF", "DXF")
 CM = 72 / 2.54
 TOLERANCIA_PAGINA_CM = 0.1
 
@@ -101,14 +105,16 @@ def montar_pasta_plotagem(pl: PlantaCPL, regras: RegrasNomenclatura, caminho_edi
             "cpl": copia.caminho, "carimbo": carimbo}
 
 
-def executar_motor(cpl: str, pasta_desenho: str, timeout: int = TIMEOUT_PADRAO_S) -> str:
-    """Roda o NCVRPLD.EXE sobre um .CPL; devolve o conteúdo do EXTDWG.TMP ("OK" em caso de sucesso)."""
+def executar_motor(cpl: str, pasta_desenho: str, timeout: int = TIMEOUT_PADRAO_S, formato: str = "PDF") -> str:
+    """Roda o NCVRPLD.EXE sobre um .CPL no formato pedido (FORMATOS_MOTOR); devolve o EXTDWG.TMP ("OK" = sucesso)."""
+    if formato not in FORMATOS_MOTOR:
+        raise ErroPlotagem(f"Formato de plotagem desconhecido: {formato} (use {', '.join(FORMATOS_MOTOR)}).")
     nome = os.path.splitext(cpl)[0]
     sel = f"{1:>10}\n{1.0:>10.3f}\n{nome}\n*{nome}\n\n{0:>10}\n{1:>10}\n\n{1:>10}\n"
     with open(os.path.join(pasta_desenho, "SELDWG.TMP"), "w", encoding="cp1252") as f:
         f.write(sel)
     with open(os.path.join(pasta_desenho, "NCVRPLD.TMP"), "w", encoding="cp1252") as f:
-        f.write("1\n1\n")
+        f.write(FORMATOS_MOTOR[formato])
     status_arq = os.path.join(pasta_desenho, "EXTDWG.TMP")
     if os.path.exists(status_arq):
         os.remove(status_arq)
@@ -162,20 +168,44 @@ def verificar_pdf(pdf: str, pl: PlantaCPL, regras: RegrasNomenclatura, numero: i
     return checagens
 
 
+def verificar_dxf(dxf: str) -> Dict[str, Any]:
+    """Checagem leve do DXF plotado: arquivo DXF completo (HEADER ... ENTITIES ... EOF)."""
+    with open(dxf, "rb") as f:
+        inicio = f.read(4096)
+        f.seek(max(0, os.path.getsize(dxf) - 64))
+        fim = f.read()
+    ok = b"HEADER" in inicio and b"EOF" in fim
+    return {"item": "DXF da plotagem", "ok": ok,
+            "detalhe": f"{os.path.getsize(dxf) / 1e6:.1f} MB" if ok else "DXF incompleto"}
+
+
 def plotar_prancha(pl: PlantaCPL, regras: RegrasNomenclatura, caminho_edificio: str,
-                   pasta_trabalho: Optional[str] = None, timeout: int = TIMEOUT_PADRAO_S) -> Dict[str, Any]:
-    """Plota a revisão atual da prancha em PDF numa pasta temporária (nada é gravado no edifício)."""
+                   pasta_trabalho: Optional[str] = None, timeout: int = TIMEOUT_PADRAO_S,
+                   formatos=FORMATOS_PADRAO) -> Dict[str, Any]:
+    """Plota a revisão atual da prancha (PDF e DXF por padrão) numa pasta temporária (nada é gravado no edifício)."""
     numero = pl.revisao_atual
     if numero is None:
         raise ErroPlotagem(f"{pl.id} não tem revisões registradas; emita a R00 antes de plotar.")
+    formatos = [f.upper().lstrip(".") for f in formatos]
+    if "PDF" not in formatos:
+        formatos.insert(0, "PDF")
     trabalho = pasta_trabalho or tempfile.mkdtemp(prefix="AUTQS_plot_")
     montagem = montar_pasta_plotagem(pl, regras, caminho_edificio, trabalho)
-    status = executar_motor(montagem["cpl"], montagem["pasta_desenho"], timeout)
     nome = regras.nome_arquivo_revisao(pl.id, numero)
-    pdf = os.path.join(montagem["pasta_plantas"], nome + ".PDF")
-    if status.upper() != "OK" or not os.path.isfile(pdf):
-        gerados = [f for f in os.listdir(montagem["pasta_plantas"]) if f.upper().endswith(".PDF")]
-        raise ErroPlotagem(f"O motor de plotagem do TQS não gerou {nome}.PDF (status: {status or 'vazio'}; "
-                           f"PDFs gerados: {', '.join(gerados) or 'nenhum'}). Pasta de trabalho: {trabalho}")
-    return {"pdf": pdf, "nome_saida": nome, "numero": numero, "checagens": verificar_pdf(pdf, pl, regras, numero),
+    arquivos: Dict[str, str] = {}
+    for formato in formatos:
+        status = executar_motor(montagem["cpl"], montagem["pasta_desenho"], timeout, formato)
+        extensoes = (".PLT", ".PLW") if formato == "PLW" else ("." + formato,)
+        for ext in extensoes:
+            saida = os.path.join(montagem["pasta_plantas"], nome + ext)
+            if status.upper() != "OK" or not os.path.isfile(saida):
+                gerados = [f for f in os.listdir(montagem["pasta_plantas"]) if f.upper().endswith(ext)]
+                raise ErroPlotagem(f"O motor de plotagem do TQS não gerou {nome}{ext} (status: {status or 'vazio'}; "
+                                   f"gerados: {', '.join(gerados) or 'nenhum'}). Pasta de trabalho: {trabalho}")
+            arquivos[ext] = saida
+    pdf = arquivos[".PDF"]
+    checagens = verificar_pdf(pdf, pl, regras, numero)
+    if ".DXF" in arquivos:
+        checagens.append(verificar_dxf(arquivos[".DXF"]))
+    return {"pdf": pdf, "arquivos": arquivos, "nome_saida": nome, "numero": numero, "checagens": checagens,
             **montagem}

@@ -456,6 +456,8 @@ class TestPlotagem(unittest.TestCase):
         try:
             res = pt.plotar_prancha(pl, regras, self.ED, pasta_trabalho=pasta)
             self.assertTrue(os.path.isfile(res["pdf"]))
+            self.assertEqual(sorted(res["arquivos"]), [".DXF", ".PDF"])
+            self.assertIn("DXF da plotagem", [c["item"] for c in res["checagens"]])
             self.assertTrue(all(c["ok"] for c in res["checagens"]), res["checagens"])
             if os.path.exists(oficial) and pl.revisao_atual == 5:
                 def textos(p):
@@ -540,7 +542,7 @@ class TestRoteamentoRevisao(unittest.TestCase):
         with patch.object(agente.orchestrator.registry, "executar_ferramenta", side_effect=[previa, gravado]) as m:
             r1 = agente.responder("plotar a prancha 0601 do 054 AE")
             self.assertEqual(r1["tipo"], "solicitacao_aprovacao")
-            self.assertIn("o PDF em PLANTAS", r1["texto"])
+            self.assertIn("o PDF/DXF em PLANTAS", r1["texto"])
             r2 = agente.responder("sim")
         self.assertEqual(r2["texto"], "✅ PDF gravado")
         params_gravacao = m.call_args_list[1][0][1]

@@ -150,7 +150,7 @@ def main():
     parser.add_argument("--revisoes", action="store_true", help="Lista as pranchas do Editor de Plantas com revisão atual e status")
     parser.add_argument("--emitir-revisao", action="store_true", help="Registra a próxima revisão no .CPL da prancha (com prévia e aprovação)")
     parser.add_argument("--conferir-revisao", action="store_true", help="Confere a plotagem (-Rnn.PDF/.TXT) da última revisão da prancha")
-    parser.add_argument("--plotar-revisao", action="store_true", help="Plota o PDF da revisão atual da prancha com o motor de plotagem do TQS (prévia + aprovação para gravar em PLANTAS)")
+    parser.add_argument("--plotar-revisao", action="store_true", help="Plota o PDF e o DXF da revisão atual da prancha com o motor de plotagem do TQS (prévia + aprovação para gravar em PLANTAS)")
     parser.add_argument("--preencher-carimbo", action="store_true", help="Gera o carimbo preenchido da prancha (<ID>_CR.DWG), como o 'Preencher' do Editor de Plantas")
     parser.add_argument("--prancha", type=str, default=None, help="Prancha: nº (ex: '0601'), ID completo ou parte do título")
     parser.add_argument("--descricao", type=str, default=None, help="Descrição da revisão (padrão: sugerida pelo que mudou desde a última plotagem)")
@@ -409,7 +409,7 @@ def main():
                 titulo, detalhe, pergunta = (
                     "plotagem da prancha",
                     f"Prancha {res['prancha']} — {res['revisao']} | PDF gerado em {res['pdf_gerado']}",
-                    "Gravar o PDF (e o carimbo preenchido) em PLANTAS?")
+                    "Gravar o PDF, o DXF e o carimbo preenchido em PLANTAS?")
                 rev = None
             elif rev:
                 titulo, detalhe, pergunta = (

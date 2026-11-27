@@ -6,8 +6,8 @@ Fluxo:
     emitir   -> registra a próxima revisão no .CPL (prévia + aprovação + backup); na troca
                 de fase cria a prancha da nova fase começando em R00
     preencher-> gera o carimbo <ID>_CR.DWG preenchido (botão "Preencher" do editor)
-    plotar   -> plota o PDF da revisão atual com o motor de plotagem do TQS (NCVRPLD.EXE)
-                numa cópia temporária da prancha e, aprovado, grava o PDF em PLANTAS
+    plotar   -> plota o PDF e o DXF da revisão atual com o motor de plotagem do TQS (NCVRPLD.EXE)
+                numa cópia temporária da prancha e, aprovado, grava o PDF e o DXF em PLANTAS
     conferir -> confere o -Rnn.PDF (e o .TXT, quando o Editor de Plantas o gera)
 
 A skill nunca abre o TQS nem altera desenhos; o motor de plotagem roda só sobre cópias.
@@ -576,7 +576,7 @@ class RevisaoPlantasSkill(BaseSkill):
         return base
 
     # ======================================================================
-    # Plotar (PDF da revisão atual pelo motor de plotagem do TQS)
+    # Plotar (PDF e DXF da revisão atual pelo motor de plotagem do TQS)
     # ======================================================================
     def _plotar(self, caminho_ed: str, pl: PlantaCPL, regras: RegrasNomenclatura,
                 simular: bool, aprovado: bool, forcar: bool, avisos: List[str]) -> Dict[str, Any]:
@@ -591,7 +591,8 @@ class RevisaoPlantasSkill(BaseSkill):
         checagens = res["checagens"]
         tudo_ok = all(c["ok"] for c in checagens)
 
-        gravar = [destino_pdf] + ([destino_cr] if carimbo and destino_cr else [])
+        saidas = [(origem, os.path.join(pl.pasta, os.path.basename(origem))) for origem in res["arquivos"].values()]
+        gravar = [d for _, d in saidas] + ([destino_cr] if carimbo and destino_cr else [])
         existentes = [g for g in gravar if os.path.exists(g)]
         if existentes:
             avisos.append("Será feito backup (_BKP_<data>) de: " + ", ".join(os.path.basename(e) for e in existentes) + ".")
@@ -600,12 +601,14 @@ class RevisaoPlantasSkill(BaseSkill):
 
         base = {"acao": "plotar", "edificio": os.path.basename(caminho_ed), "prancha": pl.id,
                 "revisao": regras.rotulo_revisao(res["numero"]), "pdf_gerado": res["pdf"],
+                "arquivos_gerados": res["arquivos"],
                 "pasta_trabalho": res["pasta_trabalho"], "destino_pdf": destino_pdf,
                 "destino_carimbo": destino_cr if carimbo else None, "checagens": checagens, "avisos": avisos}
 
         def resumo(titulo: str) -> str:
             linhas = [f"### {titulo}\n", f"- **Prancha:** `{pl.id}` — revisão {base['revisao']}",
-                      f"- **PDF gerado:** `{res['pdf']}`\n",
+                      f"- **Gerados:** {', '.join(f'`{os.path.basename(a)}`' for a in res['arquivos'].values())} "
+                      f"em `{os.path.dirname(res['pdf'])}`\n",
                       "| Item | OK | Detalhe |", "| :--- | :-: | :--- |"]
             linhas += [f"| {c['item']} | {'✅' if c['ok'] else '❌'} | {c['detalhe']} |" for c in checagens]
             linhas.append("\n**Arquivos no edifício:**")
@@ -625,11 +628,11 @@ class RevisaoPlantasSkill(BaseSkill):
             return base
         if not aprovado:
             base.update(status="aguardando_aprovacao", sucesso=True)
-            base["resumo_executivo"] = resumo(f"⚠️ {nome}.PDF pronto para gravar em PLANTAS — aguardando aprovação")
+            base["resumo_executivo"] = resumo(f"⚠️ {nome}.PDF/.DXF prontos para gravar em PLANTAS — aguardando aprovação")
             return base
 
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        copias = [(res["pdf"], destino_pdf)] + ([(carimbo["caminho"], destino_cr)] if carimbo and destino_cr else [])
+        copias = saidas + ([(carimbo["caminho"], destino_cr)] if carimbo and destino_cr else [])
         backups: Dict[str, str] = {}
         try:
             for origem, destino in copias:
@@ -642,7 +645,7 @@ class RevisaoPlantasSkill(BaseSkill):
                 shutil.copy2(bkp, destino)
             return self._erro(f"Falha ao gravar a plotagem ({e}); os arquivos anteriores foram mantidos.")
         base.update(status="sucesso", sucesso=True, backups=backups)
-        base["resumo_executivo"] = resumo(f"✅ {nome}.PDF plotado e gravado em PLANTAS") + "".join(
+        base["resumo_executivo"] = resumo(f"✅ {nome}.PDF/.DXF plotados e gravados em PLANTAS") + "".join(
             f"\n\nBackup: `{b}`" for b in backups.values())
         return base
 

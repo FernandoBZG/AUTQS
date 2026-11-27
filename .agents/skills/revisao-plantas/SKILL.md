@@ -4,7 +4,7 @@ description: >-
   Emite revisões de pranchas do Editor de Plantas do TQS V25 (.CPL): lista as pranchas com a
   revisão atual e o que está pendente, registra a próxima revisão (nº, data, autor e descrição
   sugerida a partir do que mudou desde a última plotagem) na tabela de revisões do selo, abre a
-  prancha da nova fase em R00 quando a fase muda, preenche o carimbo, plota o PDF da revisão com o
+  prancha da nova fase em R00 quando a fase muda, preenche o carimbo, plota o PDF e o DXF da revisão com o
   motor de plotagem do TQS e confere a plotagem. Use quando o usuário pedir para emitir, registrar,
   listar, plotar ou conferir revisões de pranchas/plantas.
 ---
@@ -36,16 +36,18 @@ completo sem abrir o TQS: registra a revisão no `.CPL`, preenche o carimbo e pl
    caracteres a cada 0,3 cm. Valores: carimbo anterior (inclui `_FASE`, `_PAVIMENTO`,
    `_DISCIPLINA`) + `.CPL` (tabela de revisões, `%REVISAO`, `%PLANTA`, `%NUM_PLANTA`) + títulos
    (nível 222) dos desenhos. Mesma prévia/aprovação/backup da emissão.
-4. **Plotar** (`acao="plotar"`): plota a revisão atual em PDF com o **motor de plotagem do TQS**
+4. **Plotar** (`acao="plotar"`): plota a revisão atual em PDF e DXF com o **motor de plotagem do TQS**
    (`NCVRPLD.EXE`, o mesmo que o Editor de Plantas usa) numa pasta temporária
    `%TEMP%\AUTQS_plot_*`: carimbo preenchido + cópia do `.CPL` com caminhos absolutos. Confere
    o PDF (carimbo de plotagem `<ID>-Rnn.PLT`, tamanho da folha, nenhuma `%VARIAVEL` sobrando,
-   todas as linhas da tabela de revisões) e, com `aprovado=True`, grava `<ID>-Rnn.PDF` e o
-   `<ID>_CR.DWG` em `PLANTAS` (backup `_BKP_<timestamp>` do que existir). Com divergência nas
+   todas as linhas da tabela de revisões, DXF completo) e, com `aprovado=True`, grava `<ID>-Rnn.PDF`,
+   `<ID>-Rnn.DXF` e o `<ID>_CR.DWG` em `PLANTAS` (backup `_BKP_<timestamp>` do que existir). Com divergência nas
    checagens não grava (salvo `forcar=True`).
    - Validado na R05 da `054-EST-PB-0601-TP-1FIA`: PDF idêntico ao do Editor de Plantas a
      1200 dpi; só muda a hora do carimbo de plotagem.
    - O motor não gera o `.TXT` de variáveis: a conferência usa o conteúdo do PDF.
+   - O `-Rnn.DXF` gerado é a base da descrição sugerida na revisão seguinte (contra os desenhos
+     inalterados dá "REEMISSÃO SEM ALTERAÇÕES").
 5. **Conferir** (`acao="conferir"`): confere o `<ID>-Rnn.PDF` e, se houver, o `<ID>-Rnn.TXT`
    (`REVISAO`, linha da tabela, `_FASE`).
 
@@ -59,7 +61,8 @@ completo sem abrir o TQS: registra a revisão no `.CPL`, preenche o carimbo e pl
 - **Tabela da moldura**: 11 linhas (R00 a R10). Descrição recomendada até 60 caracteres, em MAIÚSCULAS.
 - **Descrição sugerida**: compara os desenhos da prancha com o `-Rnn.DXF` da última plotagem.
 - **Motor de plotagem** (`<TQSW>\EXEC\X64\NCVRPLD.EXE`): roda na pasta de trabalho e lê
-  `SELDWG.TMP` (lista de `.CPL`) e `NCVRPLD.TMP`; grava `OK` em `EXTDWG.TMP` e o PDF ao lado do
+  `SELDWG.TMP` (lista de `.CPL`) e `NCVRPLD.TMP` (formato: `1/1` PDF, `0/1` DXF, `1/0` PLT/PLW,
+  `1/2` DWF, `1/3` SVG; o motor roda uma vez por formato); grava `OK` em `EXTDWG.TMP` e o PDF ao lado do
   `.CPL`. Não preenche as variáveis da moldura: o carimbo precisa estar preenchido antes.
 
 ## 🚀 Como Invocar
